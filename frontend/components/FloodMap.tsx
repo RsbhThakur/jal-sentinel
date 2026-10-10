@@ -25,6 +25,7 @@ interface FloodMapProps {
   hazards?: HazardPinData[];
   horizon?: 'T+0' | 'T+15' | 'T+30' | 'T+60';
   onSelectHazard?: (hazard: HazardPinData) => void;
+  routeGeoJson?: any | null;
 }
 
 // Guwahati Center Coordinates
@@ -46,7 +47,8 @@ export default function FloodMap({
   floodGeoJson,
   hazards = [],
   horizon = 'T+15',
-  onSelectHazard
+  onSelectHazard,
+  routeGeoJson
 }: FloodMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [googleMapsLoaded, setGoogleMapsLoaded] = useState<boolean>(false);
@@ -243,6 +245,25 @@ export default function FloodMap({
               />
             );
           })}
+
+          {/* Dynamic A* Evacuation Route Polyline Overlay */}
+          {routeGeoJson?.geometry?.coordinates && (
+            <polyline
+              points={routeGeoJson.geometry.coordinates
+                .map(([lng, lat]: [number, number]) => {
+                  const p = projectCoordinates(lat, lng);
+                  return `${p.x},${p.y}`;
+                })
+                .join(' ')}
+              fill="none"
+              stroke="#00E5FF"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray="3 1.5"
+              className="filter drop-shadow-[0_0_8px_rgba(0,229,255,0.8)] animate-pulse"
+            />
+          )}
         </svg>
 
         {/* Hazard Pins & Submerged Pitfall Radar Overlay */}

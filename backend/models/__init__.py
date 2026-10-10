@@ -14,7 +14,9 @@ from backend.models.schemas import (
     RepairTicketCreate,
     RepairTicketUpdate,
     RepairTicketResponse,
-    AuditLogResponse
+    AuditLogResponse,
+    RouteRequest,
+    RouteResponse
 )
 
 __all__ = [
@@ -31,5 +33,7 @@ __all__ = [
     "RepairTicketCreate",
     "RepairTicketUpdate",
     "RepairTicketResponse",
-    "AuditLogResponse"
+    "AuditLogResponse",
+    "RouteRequest",
+    "RouteResponse"
 ]

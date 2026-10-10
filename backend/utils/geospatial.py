@@ -38,3 +38,21 @@ def h3_to_geo(hex_id: str) -> tuple[float, float]:
     elif hasattr(h3, "h3_to_geo"):
         return h3.h3_to_geo(hex_id)
     raise AttributeError("Incompatible H3 library version installed.")
+
+
+
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Calculate the great-circle distance between two points on the Earth (WGS-84) in meters.
+    Used for A* spatial admissibility heuristic and edge length measurement.
+    """
+    import math
+    r = 6371000.0  # Earth radius in meters
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dphi / 2.0) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    )
+    return 2.0 * r * math.asin(math.sqrt(a))

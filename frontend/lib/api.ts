@@ -52,3 +52,42 @@ export async function fetchHealth(): Promise<HealthResponse> {
 export async function fetchRootStatus(): Promise<Record<string, unknown>> {
   return apiClient<Record<string, unknown>>('/');
 }
+
+
+export interface EvacuationRouteRequest {
+  origin_lat: number;
+  origin_lng: number;
+  destination_lat: number;
+  destination_lng: number;
+  vehicle_class: 'walker' | 'scooty' | 'sedan' | 'suv';
+}
+
+export interface EvacuationRouteResponse {
+  type: 'Feature';
+  geometry: {
+    type: 'LineString';
+    coordinates: [number, number][];
+  };
+  properties: {
+    vehicle_class: string;
+    clearance_threshold_cm: number;
+    distance_meters: number;
+    estimated_minutes: number;
+    submerged_hazards_avoided?: number;
+    clearance_status: string;
+    cached?: boolean;
+    origin_hex?: string;
+    dest_hex?: string;
+    nodes_count?: number;
+  };
+}
+
+export async function fetchEvacuationRoute(
+  payload: EvacuationRouteRequest
+): Promise<EvacuationRouteResponse> {
+  return apiClient<EvacuationRouteResponse>('/api/route', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+

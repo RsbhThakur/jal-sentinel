@@ -96,3 +96,45 @@ class AuditLogResponse(BaseModel):
     performed_by: str
     reason: Optional[str] = None
     created_at: datetime
+
+
+
+# ==============================================================================
+# Dynamic Evacuation Routing Schemas (Sprint 1: Issue #3)
+# ==============================================================================
+
+class RouteRequest(BaseModel):
+    """Payload for evacuation route queries."""
+    origin_lat: float = Field(..., description="Origin latitude in WGS-84 decimal degrees", ge=-90.0, le=90.0)
+    origin_lng: float = Field(..., description="Origin longitude in WGS-84 decimal degrees", ge=-180.0, le=180.0)
+    destination_lat: float = Field(..., description="Destination latitude in WGS-84 decimal degrees", ge=-90.0, le=90.0)
+    destination_lng: float = Field(..., description="Destination longitude in WGS-84 decimal degrees", ge=-180.0, le=180.0)
+    vehicle_class: str = Field(default="sedan", description="Vehicle type: walker, scooty, sedan, or suv")
+    timestamp: Optional[datetime] = Field(default=None, description="Query timestamp; defaults to UTC now")
+
+
+class RouteGeometry(BaseModel):
+    type: str = "LineString"
+    coordinates: List[List[float]] = Field(..., description="List of [lng, lat] coordinate pairs")
+
+
+class RouteProperties(BaseModel):
+    vehicle_class: str
+    distance_meters: float
+    estimated_minutes: float
+    submerged_hazards_avoided: int
+    clearance_threshold_cm: float
+    max_flood_depth_encountered_cm: float
+    clearance_status: str
+    nodes_count: int
+    cached: bool = False
+    origin_hex: str
+    dest_hex: str
+
+
+class RouteResponse(BaseModel):
+    """GeoJSON Feature representation of computed evacuation corridor."""
+    type: str = "Feature"
+    geometry: RouteGeometry
+    properties: RouteProperties
+

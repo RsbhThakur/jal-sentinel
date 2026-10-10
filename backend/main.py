@@ -4,7 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import settings
 from backend.database import init_db
-from backend.routers import health, hazards, ws
+from backend.routers import health, hazards, ws, routing
+from backend.cache import close_redis_client
 
 # Configure structured logging
 logging.basicConfig(
@@ -23,6 +24,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Database initialization deferred or failed: {e}")
     yield
+    try:
+        await close_redis_client()
+    except Exception as e:
+        logger.debug(f"Redis shutdown cleanup: {e}")
     logger.info("Shutting down JAL-SENTINEL backend...")
 
 
@@ -49,6 +54,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(hazards.router)
 app.include_router(ws.router)
+app.include_router(routing.router)
 
 
 @app.get("/", tags=["root"])
