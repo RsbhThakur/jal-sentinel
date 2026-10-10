@@ -125,11 +125,27 @@ export default function FloodMap({
   const activeInfoWindowRef = useRef<any>(null);
 
   const [googleMapsLoaded, setGoogleMapsLoaded] = useState<boolean>(false);
+  const [mapMode, setMapMode] = useState<'dark' | 'satellite'>('dark');
   const [zoomLevel, setZoomLevel] = useState<number>(14);
   const [activeFilter, setActiveFilter] = useState<string>('all');
   const [hoveredPolygon, setHoveredPolygon] = useState<FloodPolygonFeature | null>(null);
 
   const googleApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
+
+  // Toggle between high-contrast dark vector grid and real Google satellite imagery
+  const toggleMapMode = (mode: 'dark' | 'satellite') => {
+    setMapMode(mode);
+    const map = mapInstanceRef.current;
+    if (!map || !window.google?.maps) return;
+
+    if (mode === 'satellite') {
+      map.setMapTypeId(window.google.maps.MapTypeId.HYBRID);
+      map.setOptions({ styles: [] });
+    } else {
+      map.setMapTypeId(window.google.maps.MapTypeId.ROADMAP);
+      map.setOptions({ styles: darkGoogleMapStyles });
+    }
+  };
 
   // 1. Load Google Maps Script
   useEffect(() => {
@@ -169,12 +185,9 @@ export default function FloodMap({
         center: { lat: GUWAHATI_LAT, lng: GUWAHATI_LNG },
         zoom: zoomLevel,
         styles: darkGoogleMapStyles,
-        disableDefaultUI: false,
+        disableDefaultUI: true, // Disables clashing default controls (white Map/Satellite box, pegman, etc.)
         zoomControl: false,
-        mapTypeControl: true,
-        mapTypeControlOptions: {
-          position: window.google.maps.ControlPosition.TOP_RIGHT,
-        },
+        mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
       });
@@ -348,14 +361,41 @@ export default function FloodMap({
   return (
     <div className="relative w-full h-full min-h-[480px] bg-[#0A0E17] rounded-2xl overflow-hidden flex flex-col border border-gray-800 shadow-2xl">
       {/* Top Map Controls Bar */}
-      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none">
-        {/* Layer & Mode Indicator */}
-        <div className="flex items-center gap-2 pointer-events-auto bg-[#111827]/90 backdrop-blur border border-gray-800 px-3 py-1.5 rounded-lg shadow-lg">
-          <Layers className="w-4 h-4 text-cyan-400" />
-          <span className="text-xs font-bold text-gray-200">Digital Twin Flood Radar</span>
-          <span className="text-[10px] font-mono bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded font-semibold">
-            {googleMapsLoaded ? 'GOOGLE MAPS JS API' : 'OFFICIAL HYDRAULIC GIS'}
-          </span>
+      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none gap-2">
+        {/* Layer & Mode Indicator + Satellite Toggle */}
+        <div className="flex items-center gap-2 pointer-events-auto">
+          <div className="flex items-center gap-2 bg-[#111827]/90 backdrop-blur border border-gray-800 px-3 py-1.5 rounded-lg shadow-lg">
+            <Layers className="w-4 h-4 text-cyan-400" />
+            <span className="text-xs font-bold text-gray-200">Digital Twin Flood Radar</span>
+            <span className="text-[10px] font-mono bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded font-semibold">
+              {googleMapsLoaded ? 'GOOGLE MAPS JS API' : 'OFFICIAL HYDRAULIC GIS'}
+            </span>
+          </div>
+
+          {googleMapsLoaded && (
+            <div className="flex items-center bg-[#111827]/90 backdrop-blur border border-gray-800 p-0.5 rounded-lg shadow-lg">
+              <button
+                onClick={() => toggleMapMode('dark')}
+                className={`px-2.5 py-1 rounded text-[11px] font-mono font-medium transition ${
+                  mapMode === 'dark'
+                    ? 'bg-cyan-600 text-white font-bold'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
+                }`}
+              >
+                Dark Grid
+              </button>
+              <button
+                onClick={() => toggleMapMode('satellite')}
+                className={`px-2.5 py-1 rounded text-[11px] font-mono font-medium transition ${
+                  mapMode === 'satellite'
+                    ? 'bg-cyan-600 text-white font-bold'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'
+                }`}
+              >
+                Satellite
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Hazard Class Filters */}
@@ -396,7 +436,7 @@ export default function FloodMap({
       </div>
 
       {/* Zoom Controls */}
-      <div className="absolute bottom-3 right-3 z-30 flex flex-col gap-1 pointer-events-auto">
+      <div className="absolute bottom-9 right-3 z-30 flex flex-col gap-1 pointer-events-auto">
         <button 
           onClick={() => handleZoom(1)}
           className="p-2 bg-[#111827]/90 hover:bg-gray-800 border border-gray-800 rounded-lg text-gray-300 shadow transition"
