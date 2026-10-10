@@ -138,3 +138,38 @@ class RouteResponse(BaseModel):
     geometry: RouteGeometry
     properties: RouteProperties
 
+
+
+# ==============================================================================
+# Inundation & Hydraulic Modeling Schemas (Sprint 2: Issue #6)
+# ==============================================================================
+
+class FloodPolygonGeometry(BaseModel):
+    type: str = "Polygon"
+    coordinates: List[List[List[float]]] = Field(..., description="Polygon boundary coordinate rings [ [ [lng, lat], ... ] ]")
+
+
+class FloodPolygonProperties(BaseModel):
+    zone_name: str
+    depth_cm: float
+    surge_velocity_mm_min: float
+    manning_roughness: float
+    clearance_blocked: bool
+    horizon: str
+    predicted_at: Optional[str] = None
+
+
+class FloodPolygonFeature(BaseModel):
+    type: str = "Feature"
+    id: str
+    properties: FloodPolygonProperties
+    geometry: FloodPolygonGeometry
+
+
+class FloodPredictionResponse(BaseModel):
+    """GeoJSON FeatureCollection representing predicted inundation boundaries."""
+    type: str = "FeatureCollection"
+    horizon: str
+    timestamp: str
+    features: List[FloodPolygonFeature]
+

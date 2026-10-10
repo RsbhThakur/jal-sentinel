@@ -91,3 +91,35 @@ export async function fetchEvacuationRoute(
   });
 }
 
+export interface FloodPredictionResponse {
+  type: 'FeatureCollection';
+  horizon: string;
+  timestamp: string;
+  features: Array<{
+    type: 'Feature';
+    id: string;
+    geometry: {
+      type: 'Polygon';
+      coordinates: [number, number][][];
+    };
+    properties: {
+      zone_name: string;
+      depth_cm: number;
+      surge_velocity_mm_min: number;
+      manning_roughness: number;
+      clearance_blocked: boolean;
+      horizon: string;
+      predicted_at?: string;
+    };
+  }>;
+}
+
+export async function fetchFloodPrediction(
+  horizonMinutes: number | string = 15,
+  recompute: boolean = false
+): Promise<FloodPredictionResponse> {
+  const t = String(horizonMinutes).replace('T+', '');
+  return apiClient<FloodPredictionResponse>(`/api/flood/prediction?t=${t}&recompute=${recompute}`);
+}
+
+

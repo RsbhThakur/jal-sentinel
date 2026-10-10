@@ -16,7 +16,9 @@ from backend.models.schemas import (
     RepairTicketResponse,
     AuditLogResponse,
     RouteRequest,
-    RouteResponse
+    RouteResponse,
+    FloodPolygonFeature,
+    FloodPredictionResponse
 )
 
 __all__ = [
@@ -35,5 +37,7 @@ __all__ = [
     "RepairTicketResponse",
     "AuditLogResponse",
     "RouteRequest",
-    "RouteResponse"
+    "RouteResponse",
+    "FloodPolygonFeature",
+    "FloodPredictionResponse"
 ]

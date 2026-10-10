@@ -27,8 +27,8 @@ async def get_redis_client() -> aioredis.Redis:
         candidate = aioredis.from_url(
             settings.redis_url,
             decode_responses=True,
-            socket_timeout=1.5,
-            socket_connect_timeout=1.5
+            socket_timeout=0.3,
+            socket_connect_timeout=0.3
         )
         await candidate.ping()
         _redis_client = candidate

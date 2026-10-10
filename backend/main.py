@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import settings
 from backend.database import init_db
-from backend.routers import health, hazards, ws, video, routing
+from backend.routers import health, hazards, ws, video, routing, flood
 from backend.cache import close_redis_client
 
 # Configure structured logging
@@ -56,6 +56,7 @@ app.include_router(hazards.router)
 app.include_router(ws.router)
 app.include_router(video.router)
 app.include_router(routing.router)
+app.include_router(flood.router)
 
 
 @app.get("/", tags=["root"])
