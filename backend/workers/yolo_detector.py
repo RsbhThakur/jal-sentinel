@@ -11,6 +11,7 @@ from collections import deque, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import numpy as np
+import cv2
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 

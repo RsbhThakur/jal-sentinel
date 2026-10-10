@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { AlertOctagon, Radio } from 'lucide-react';
+import { AlertOctagon } from 'lucide-react';
 
 interface SOSButtonProps {
   className?: string;
@@ -12,7 +12,7 @@ export default function SOSButton({ className = '' }: SOSButtonProps) {
   return (
     <Link
       href="/sos"
-      className={`group fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-full bg-gradient-to-r from-rose-600 to-red-600 px-5 py-3.5 text-white shadow-2xl transition-all duration-300 hover:scale-105 hover:from-rose-500 hover:to-red-500 hover:shadow-rose-600/50 active:scale-95 ${className}`}
+      className={`group fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-40 flex items-center gap-3 rounded-full bg-gradient-to-r from-rose-600 to-red-600 px-5 py-3.5 text-white shadow-2xl transition-all duration-300 hover:scale-105 hover:from-rose-500 hover:to-red-500 hover:shadow-rose-600/50 active:scale-95 border border-rose-400/30 ${className}`}
       title="Citizen Emergency SOS Dispatch"
       aria-label="Citizen Emergency SOS Dispatch"
     >

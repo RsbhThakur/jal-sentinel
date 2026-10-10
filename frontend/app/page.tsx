@@ -1,13 +1,20 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import Link from 'next/link';
 import FloodMap from '@/components/FloodMap';
 import DepthGauge from '@/components/DepthGauge';
 import TimelineSlider, { TimeHorizon } from '@/components/TimelineSlider';
 import { HazardPinData } from '@/components/HazardPin';
 import SOSButton from '@/components/SOSButton';
 import { useFloodTelemetry } from '@/lib/websocket';
-import { fetchHealth, HealthResponse } from '@/lib/api';
+import { 
+  fetchHealth, 
+  HealthResponse, 
+  fetchEvacuationRoute, 
+  EvacuationRouteResponse, 
+  uploadCitizenVideoFile 
+} from '@/lib/api';
 import { 
   AlertTriangle, 
   Waves, 
@@ -17,10 +24,29 @@ import {
   MapPin, 
   Radio, 
   Upload, 
-  Server,
-  Zap,
-  CheckCircle2
+  Zap, 
+  CheckCircle2, 
+  Car, 
+  Bike, 
+  User, 
+  Truck, 
+  Route, 
+  X, 
+  RefreshCw, 
+  FileVideo, 
+  ChevronRight,
+  ShieldCheck,
+  ExternalLink
 } from 'lucide-react';
+
+type VehicleClass = 'walker' | 'scooty' | 'sedan' | 'suv';
+
+const VEHICLE_SPECS: Record<VehicleClass, { label: string; clearanceCm: number; icon: React.ElementType }> = {
+  walker: { label: 'Walker', clearanceCm: 15, icon: User },
+  scooty: { label: '2-Wheeler', clearanceCm: 20, icon: Bike },
+  sedan: { label: 'Sedan', clearanceCm: 35, icon: Car },
+  suv: { label: 'SUV', clearanceCm: 55, icon: Truck },
+};
 
 export default function HomePage() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -31,6 +57,24 @@ export default function HomePage() {
 
   // Real-time WebSocket Telemetry Hook
   const { connected: wsConnected, horizon, floodData, depthData, hazards: wsHazards, setHorizon } = useFloodTelemetry();
+
+  // Evacuation Corridor Routing State
+  const [evacuatePanelOpen, setEvacuatePanelOpen] = useState<boolean>(false);
+  const [vehicleClass, setVehicleClass] = useState<VehicleClass>('sedan');
+  const [evacuationRoute, setEvacuationRoute] = useState<EvacuationRouteResponse | null>(null);
+  const [routeLoading, setRouteLoading] = useState<boolean>(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+
+  // Quick Citizen Video Upload Modal State
+  const [uploadModalOpen, setUploadModalOpen] = useState<boolean>(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadLat, setUploadLat] = useState<string>('26.1448');
+  const [uploadLng, setUploadLng] = useState<string>('91.7365');
+  const [uploadDesc, setUploadDesc] = useState<string>('');
+  const [uploadLoading, setUploadLoading] = useState<boolean>(false);
+  const [uploadSuccessResult, setUploadSuccessResult] = useState<any | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const uploadFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Sync hazard events received over WebSocket telemetry
   useEffect(() => {
@@ -81,7 +125,6 @@ export default function HomePage() {
       })
       .catch((err) => {
         console.warn('Failed to fetch hazards endpoint, using baseline:', err);
-        // Fallback default Guwahati pins
         setHazards([
           {
             id: "hazard-ghy-01",
@@ -120,30 +163,101 @@ export default function HomePage() {
       });
   }, []);
 
+  // Compute Evacuation Route End-to-End
+  const handleCalculateEvacuation = async (overrideClass?: VehicleClass) => {
+    const vClass = overrideClass || vehicleClass;
+    setRouteLoading(true);
+    setRouteError(null);
+    setEvacuatePanelOpen(true);
+
+    try {
+      // Default: Christian Basti (origin) to Dispur Supermarket (safe destination)
+      const res = await fetchEvacuationRoute({
+        origin_lat: 26.1448,
+        origin_lng: 91.7365,
+        destination_lat: 26.1380,
+        destination_lng: 91.7890,
+        vehicle_class: vClass
+      });
+      setEvacuationRoute(res);
+    } catch (err: any) {
+      setRouteError(err.message || 'Evacuation corridor calculation failed.');
+    } finally {
+      setRouteLoading(false);
+    }
+  };
+
+  // Submit Citizen Video Ingestion End-to-End
+  const handleUploadSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadFile) {
+      setUploadError('Please select a video file (.mp4, .webm, or .mov).');
+      return;
+    }
+
+    const latNum = parseFloat(uploadLat);
+    const lngNum = parseFloat(uploadLng);
+    if (isNaN(latNum) || isNaN(lngNum)) {
+      setUploadError('Please enter valid numeric latitude and longitude coordinates.');
+      return;
+    }
+
+    setUploadLoading(true);
+    setUploadError(null);
+
+    const formData = new FormData();
+    formData.append('file', uploadFile);
+    formData.append('lat', String(latNum));
+    formData.append('lng', String(lngNum));
+    formData.append('timestamp', new Date().toISOString());
+    if (uploadDesc.trim()) {
+      formData.append('description', uploadDesc.trim());
+    }
+
+    try {
+      const res = await uploadCitizenVideoFile(formData);
+      setUploadSuccessResult(res);
+    } catch (err: any) {
+      setUploadError(err.message || 'Video upload failed. Please verify server connection.');
+    } finally {
+      setUploadLoading(false);
+    }
+  };
+
+  const handleResetUploadModal = () => {
+    setUploadFile(null);
+    setUploadSuccessResult(null);
+    setUploadError(null);
+    setUploadDesc('');
+    if (uploadFileInputRef.current) {
+      uploadFileInputRef.current.value = '';
+    }
+  };
+
   const submergedCount = hazards.filter((h) => h.submerged).length;
 
   return (
-    <main className="min-h-screen bg-[#0B0F19] text-gray-100 flex flex-col font-sans">
+    <main className="min-h-screen bg-[#0B0F19] text-gray-100 flex flex-col font-sans overflow-x-hidden">
       {/* Top Mission Control Bar */}
-      <header className="border-b border-gray-800 bg-[#111827]/80 backdrop-blur sticky top-0 z-50 px-6 py-3 flex items-center justify-between">
+      <header className="border-b border-gray-800 bg-[#111827]/90 backdrop-blur sticky top-0 z-40 px-4 sm:px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="bg-blue-600/20 p-2 rounded-lg border border-blue-500/30 text-blue-400">
             <Waves className="w-6 h-6 animate-pulse" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="font-bold text-lg tracking-wide text-white">JAL-SENTINEL</h1>
+              <h1 className="font-bold text-base sm:text-lg tracking-wide text-white">JAL-SENTINEL</h1>
               <span className="text-[10px] uppercase font-semibold bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20">
                 v1.0.0
               </span>
             </div>
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-400 hidden sm:block">
               Autonomous Optical Inundation & Dynamic Evacuation Engine · Guwahati Metro
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex items-center gap-2 sm:gap-3 text-sm">
           {/* Real-time IST Clock */}
           <div className="hidden md:flex items-center gap-2 bg-gray-900/80 px-3 py-1.5 rounded-md border border-gray-800">
             <Radio className="w-3.5 h-3.5 text-emerald-400 animate-ping" />
@@ -162,25 +276,25 @@ export default function HomePage() {
             </span>
           </div>
 
-          <a
+          <Link
             href="/admin"
             className="text-xs font-semibold px-3 py-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 transition"
           >
             Admin Gate
-          </a>
+          </Link>
 
-          <a
+          <Link
             href="/sos"
             className="text-xs font-bold px-3.5 py-1.5 rounded-md bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 flex items-center gap-1.5 transition"
           >
             <ShieldAlert className="w-3.5 h-3.5" />
             SOS
-          </a>
+          </Link>
         </div>
       </header>
 
-      {/* Main Container */}
-      <div className="flex-1 p-6 max-w-7xl mx-auto w-full flex flex-col gap-5">
+      {/* Main Container - Optimal bottom padding so last container clears fixed SOS button cleanly */}
+      <div className="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full flex flex-col gap-5 pb-20 sm:pb-24">
         {/* Metric Badges Banner */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-[#111827] border border-gray-800 p-4 rounded-xl flex items-center justify-between">
@@ -227,8 +341,12 @@ export default function HomePage() {
           <div className="bg-[#111827] border border-gray-800 p-4 rounded-xl flex items-center justify-between">
             <div>
               <p className="text-xs uppercase text-gray-400 font-medium">Corridor Safety</p>
-              <h3 className="text-2xl font-bold text-emerald-400 mt-1 font-mono">98.2% Dry</h3>
-              <p className="text-[11px] text-gray-500 mt-0.5">Dynamic A* Bypass Ready</p>
+              <h3 className="text-2xl font-bold text-emerald-400 mt-1 font-mono">
+                {evacuationRoute ? `${(evacuationRoute.properties.distance_meters / 1000).toFixed(1)} km Dry` : '98.2% Dry'}
+              </h3>
+              <p className="text-[11px] text-gray-500 mt-0.5">
+                {evacuationRoute ? 'A* Safe Corridor Active' : 'Dynamic A* Bypass Ready'}
+              </p>
             </div>
             <div className="bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/20 text-emerald-400">
               <Navigation className="w-6 h-6" />
@@ -238,7 +356,7 @@ export default function HomePage() {
 
         {/* Central Workspace Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1">
-          {/* Left 2 Cols: Timeline Slider & Flood Map */}
+          {/* Left 2 Cols: Timeline Slider & Google Map / Digital Twin */}
           <div className="lg:col-span-2 flex flex-col gap-3 min-h-[500px]">
             {/* Predictive Inundation Timeline Slider */}
             <TimelineSlider
@@ -247,17 +365,18 @@ export default function HomePage() {
             />
 
             {/* Google Maps / Digital Twin Interactive Map */}
-            <div className="flex-1 min-h-[440px]">
+            <div className="flex-1 min-h-[460px] relative">
               <FloodMap
                 floodGeoJson={floodData}
                 hazards={hazards}
                 horizon={horizon}
                 onSelectHazard={(h) => setSelectedHazard(h)}
+                routeGeoJson={evacuationRoute}
               />
             </div>
           </div>
 
-          {/* Right Col: Depth Gauge & Hazard Alert Console */}
+          {/* Right Col: Depth Gauge, Submerged Pitfalls & Evacuate/Upload Console */}
           <div className="flex flex-col gap-4">
             {/* Real-time Circular Water Depth Gauge */}
             <DepthGauge
@@ -268,7 +387,7 @@ export default function HomePage() {
             />
 
             {/* Selected Hazard or Submerged Pitfall Alert Console */}
-            <div className="bg-[#111827] border border-gray-800 rounded-2xl p-4 flex flex-col flex-1 justify-between shadow-xl">
+            <div className="bg-[#111827] border border-gray-800 rounded-2xl p-4 flex flex-col justify-between shadow-xl">
               <div>
                 <div className="flex items-center justify-between border-b border-gray-800 pb-2 mb-3">
                   <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
@@ -329,30 +448,306 @@ export default function HomePage() {
                 )}
               </div>
 
-              {/* Action Buttons */}
+              {/* Action Buttons: Fully Interactive & Working End-to-End */}
               <div className="mt-4 pt-3 border-t border-gray-800 flex gap-2">
-                <a
-                  href="/upload"
-                  className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition"
+                <button
+                  type="button"
+                  onClick={() => setUploadModalOpen(true)}
+                  className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 transition active:scale-95 shadow"
                 >
-                  <Upload className="w-3.5 h-3.5" />
+                  <Upload className="w-3.5 h-3.5 text-cyan-400" />
                   Upload Video
-                </a>
-                <a
-                  href="/route"
-                  className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition shadow-lg shadow-blue-600/20"
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEvacuatePanelOpen(true);
+                    if (!evacuationRoute) {
+                      handleCalculateEvacuation();
+                    }
+                  }}
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-bold py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 transition active:scale-95 shadow-lg shadow-cyan-600/25"
                 >
                   <Navigation className="w-3.5 h-3.5" />
                   Evacuate
-                </a>
+                </button>
               </div>
             </div>
+
+            {/* Interactive In-Page Evacuation Corridor Control Drawer */}
+            {evacuatePanelOpen && (
+              <div className="bg-[#111827] border border-cyan-500/40 rounded-2xl p-4 shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="flex items-center justify-between border-b border-gray-800 pb-2">
+                  <span className="text-xs font-bold text-white uppercase flex items-center gap-1.5">
+                    <Route className="w-4 h-4 text-cyan-400" />
+                    Dynamic Evacuation Corridor
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Link
+                      href="/route"
+                      className="text-[10px] text-cyan-400 hover:underline flex items-center gap-0.5 mr-2 font-mono"
+                      title="Open Fullscreen Evacuation Studio"
+                    >
+                      Studio <ExternalLink className="w-2.5 h-2.5" />
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => setEvacuatePanelOpen(false)}
+                      className="p-1 text-gray-400 hover:text-white rounded"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Vehicle Clearance Switcher */}
+                <div className="space-y-1">
+                  <p className="text-[10px] uppercase font-bold text-gray-400">Select Vehicle Clearance Profile</p>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {(Object.keys(VEHICLE_SPECS) as VehicleClass[]).map((vKey) => {
+                      const spec = VEHICLE_SPECS[vKey];
+                      const Icon = spec.icon;
+                      const isSelected = vehicleClass === vKey;
+                      return (
+                        <button
+                          key={vKey}
+                          type="button"
+                          onClick={() => {
+                            setVehicleClass(vKey);
+                            handleCalculateEvacuation(vKey);
+                          }}
+                          className={`p-1.5 rounded-lg border text-center flex flex-col items-center justify-center transition text-[10px] font-mono ${
+                            isSelected
+                              ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold'
+                              : 'bg-gray-900 border-gray-800 text-gray-400 hover:bg-gray-800'
+                          }`}
+                        >
+                          <Icon className="w-3.5 h-3.5 mb-0.5" />
+                          <span>{spec.clearanceCm}cm</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Route Calculation Result */}
+                {routeLoading ? (
+                  <div className="p-4 rounded-xl bg-gray-900/80 border border-gray-800 flex items-center justify-center gap-2 text-xs text-cyan-400">
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Calculating dry corridor avoiding submerged pits...
+                  </div>
+                ) : routeError ? (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
+                    {routeError}
+                  </div>
+                ) : evacuationRoute ? (
+                  <div className="space-y-2 bg-gray-900/80 p-3 rounded-xl border border-gray-800 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Total Distance:</span>
+                      <span className="font-bold font-mono text-white">
+                        {(evacuationRoute.properties.distance_meters / 1000).toFixed(2)} km
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Transit Time:</span>
+                      <span className="font-bold font-mono text-cyan-400">
+                        {evacuationRoute.properties.estimated_minutes.toFixed(1)} mins
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Hazards Bypassed:</span>
+                      <span className="font-bold font-mono text-amber-400">
+                        {evacuationRoute.properties.submerged_hazards_avoided || 0} Pitfalls
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between pt-1 border-t border-gray-800 text-[10px] font-mono">
+                      <span className="text-emerald-400 font-bold">CLEARANCE SAFE</span>
+                      <button
+                        type="button"
+                        onClick={() => setEvacuationRoute(null)}
+                        className="text-gray-500 hover:text-gray-300 underline"
+                      >
+                        Clear Corridor
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleCalculateEvacuation()}
+                    disabled={routeLoading}
+                    className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${routeLoading ? 'animate-spin' : ''}`} />
+                    Recompute A* Corridor
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       {/* Floating Action Button: One-Tap Citizen Emergency SOS */}
       <SOSButton />
+
+      {/* Citizen Video Ingestion Quick Upload Modal */}
+      {uploadModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-[#111827] border border-gray-800 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl relative space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="bg-cyan-500/10 p-1.5 rounded-lg text-cyan-400 border border-cyan-500/20">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Citizen Flood Video Ingest</h3>
+                  <p className="text-[11px] text-gray-400">Upload geotagged flood footage to municipal queue</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setUploadModalOpen(false);
+                  handleResetUploadModal();
+                }}
+                className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {uploadSuccessResult ? (
+              <div className="text-center space-y-3 py-3">
+                <div className="w-12 h-12 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <h4 className="text-sm font-bold text-white">Video Submitted for Admin Moderation!</h4>
+                <p className="text-xs text-gray-300">
+                  Your clip has been queued into the municipal admin gate for optical inspection.
+                </p>
+                <div className="bg-gray-900/80 p-3 rounded-xl border border-gray-800 text-xs font-mono text-left space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Upload ID:</span>
+                    <span className="text-cyan-400 font-bold">{String(uploadSuccessResult.id).slice(0, 16)}...</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Status:</span>
+                    <span className="text-amber-400 font-bold uppercase">{uploadSuccessResult.status || 'PENDING'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">H3 Hex:</span>
+                    <span>{uploadSuccessResult.h3_hex_id}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleResetUploadModal();
+                    setUploadModalOpen(false);
+                  }}
+                  className="w-full bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold py-2.5 px-4 rounded-xl transition"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleUploadSubmit} className="space-y-3 text-xs">
+                {/* File picker */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-gray-300 uppercase">Select Video Clip</label>
+                  <input
+                    ref={uploadFileInputRef}
+                    type="file"
+                    accept="video/mp4,video/webm,video/quicktime"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setUploadFile(e.target.files[0]);
+                        setUploadError(null);
+                      }
+                    }}
+                    className="w-full text-xs text-gray-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-cyan-600 file:text-white hover:file:bg-cyan-500 file:cursor-pointer cursor-pointer border border-gray-800 rounded-xl bg-gray-900/60 p-2"
+                  />
+                  {uploadFile && (
+                    <p className="text-[11px] text-cyan-400 font-mono">
+                      Selected: {uploadFile.name} ({(uploadFile.size / 1024 / 1024).toFixed(2)} MB)
+                    </p>
+                  )}
+                </div>
+
+                {/* GPS Coordinates */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-gray-300 uppercase">Latitude</label>
+                    <input
+                      type="text"
+                      value={uploadLat}
+                      onChange={(e) => setUploadLat(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-800 rounded-lg p-2 font-mono text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-gray-300 uppercase">Longitude</label>
+                    <input
+                      type="text"
+                      value={uploadLng}
+                      onChange={(e) => setUploadLng(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-800 rounded-lg p-2 font-mono text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Description */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-gray-300 uppercase">Hazard Notes / Observation</label>
+                  <input
+                    type="text"
+                    value={uploadDesc}
+                    onChange={(e) => setUploadDesc(e.target.value)}
+                    placeholder="e.g. Submerged open drain manhole near ABC bus stop"
+                    className="w-full bg-gray-900 border border-gray-800 rounded-lg p-2 text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                {uploadError && (
+                  <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
+                    {uploadError}
+                  </div>
+                )}
+
+                <div className="pt-2 flex gap-2">
+                  <Link
+                    href="/upload"
+                    className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold py-2.5 px-3 rounded-xl transition flex items-center gap-1"
+                  >
+                    <FileVideo className="w-3.5 h-3.5" />
+                    Studio
+                  </Link>
+                  <button
+                    type="submit"
+                    disabled={uploadLoading || !uploadFile}
+                    className="flex-1 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition shadow-lg shadow-cyan-600/30"
+                  >
+                    {uploadLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        Uploading to Queue...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4" />
+                        Submit Video to Queue
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }

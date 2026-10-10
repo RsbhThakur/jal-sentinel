@@ -69,7 +69,7 @@ export default function CitizenUploadPage() {
       setGpsError('Geolocation is not supported by your browser.');
       setGpsLoading(false);
     }
-
+  };
 
   const startInlineRecording = async () => {
     setErrorMessage(null);
@@ -471,5 +471,3 @@ export default function CitizenUploadPage() {
     </div>
   );
 }
-
-  };
