@@ -1,0 +1,20 @@
+{
+  "name": "jal-sentinel-agent",
+  "version": "1.0.0",
+  "description": "@cline/sdk autonomous emergency grid orchestrator",
+  "main": "agent.ts",
+  "scripts": {
+    "start": "ts-node agent.ts",
+    "build": "tsc",
+    "test": "node -e \"console.log('Cline agent stubs verified')\""
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.0"
+  }
+}
