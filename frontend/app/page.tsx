@@ -5,6 +5,7 @@ import FloodMap from '@/components/FloodMap';
 import DepthGauge from '@/components/DepthGauge';
 import TimelineSlider, { TimeHorizon } from '@/components/TimelineSlider';
 import { HazardPinData } from '@/components/HazardPin';
+import SOSButton from '@/components/SOSButton';
 import { useFloodTelemetry } from '@/lib/websocket';
 import { fetchHealth, HealthResponse } from '@/lib/api';
 import { 
@@ -349,6 +350,9 @@ export default function HomePage() {
           </div>
         </div>
       </div>
+
+      {/* Floating Action Button: One-Tap Citizen Emergency SOS */}
+      <SOSButton />
     </main>
   );
 }

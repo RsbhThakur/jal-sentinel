@@ -34,5 +34,14 @@
     "contact": "+91-361-2237004",
     "boats_available": 4,
     "personnel_count": 18
+  },
+  {
+    "id": "sdrf-kamrup-05",
+    "name": "SDRF Basistha / Khanapara Rapid Action Unit",
+    "lat": 26.1150,
+    "lng": 91.8020,
+    "contact": "+91-361-2237005",
+    "boats_available": 5,
+    "personnel_count": 20
   }
 ]

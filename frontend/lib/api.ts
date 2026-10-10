@@ -224,3 +224,49 @@ export async function fetchPublicOpenTickets(): Promise<{
 }> {
   return apiClient('/api/tickets/open');
 }
+
+// ==============================================================================
+// Citizen SOS & SDRF Emergency Dispatch Types and API Calls (Issue #11)
+// ==============================================================================
+
+export interface SdrfUnitItem {
+  id: string;
+  name: string;
+  contact: string;
+  lat: number;
+  lng: number;
+  distance_meters: number;
+  boats_available?: number;
+  personnel_count?: number;
+}
+
+export interface CitizenSosResponse {
+  incident_id: string;
+  status: string;
+  sdrf_unit: SdrfUnitItem;
+  eta_min: number;
+  sms_gateway_status: string;
+  alert_message: string;
+  timestamp: string;
+  audit_log_id?: string;
+}
+
+export async function dispatchCitizenSos(payload: {
+  lat: number;
+  lng: number;
+  message?: string;
+  citizen_phone?: string;
+}): Promise<CitizenSosResponse> {
+  return apiClient<CitizenSosResponse>('/api/sos', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchSdrfUnits(): Promise<SdrfUnitItem[]> {
+  return apiClient<SdrfUnitItem[]>('/api/sos/units');
+}
+
+export async function fetchNearestSdrfUnit(lat: number, lng: number): Promise<SdrfUnitItem> {
+  return apiClient<SdrfUnitItem>(`/api/sos/nearest?lat=${lat}&lng=${lng}`);
+}

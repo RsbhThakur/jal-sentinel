@@ -225,3 +225,39 @@ class WebSocketClientAction(BaseModel):
     horizon: Optional[str] = None
     camera_id: Optional[str] = None
 
+
+# ==============================================================================
+# Citizen SOS & SDRF Emergency Dispatch Schemas (Sprint 4: Issue #11)
+# ==============================================================================
+
+class CitizenSosRequest(BaseModel):
+    """Payload for citizen emergency SOS broadcast."""
+    lat: float = Field(..., description="Citizen GPS latitude", ge=-90.0, le=90.0)
+    lng: float = Field(..., description="Citizen GPS longitude", ge=-180.0, le=180.0)
+    message: Optional[str] = Field(default=None, description="Optional emergency distress message")
+    citizen_phone: Optional[str] = Field(default=None, description="Optional citizen callback contact number")
+
+
+class SdrfUnitInfo(BaseModel):
+    """Details of the dispatched State Disaster Response Force staging unit."""
+    id: str
+    name: str
+    contact: str
+    lat: float
+    lng: float
+    distance_meters: float
+    boats_available: Optional[int] = None
+    personnel_count: Optional[int] = None
+
+
+class CitizenSosResponse(BaseModel):
+    """Response returned upon successful SOS dispatch."""
+    incident_id: str
+    status: str
+    sdrf_unit: SdrfUnitInfo
+    eta_min: int
+    sms_gateway_status: str
+    alert_message: str
+    timestamp: str
+    audit_log_id: Optional[str] = None
+
