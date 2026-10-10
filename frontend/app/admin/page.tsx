@@ -52,6 +52,7 @@ export default function AdminDashboardPage() {
   const [isSubmittingLogin, setIsSubmittingLogin] = useState<boolean>(false);
 
   const [activeTab, setActiveTab] = useState<'kanban' | 'uploads' | 'audit'>('kanban');
+  const [uploadFilter, setUploadFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
   const [uploads, setUploads] = useState<VideoUploadItem[]>([]);
   const [tickets, setTickets] = useState<RepairTicketItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
@@ -206,6 +207,12 @@ export default function AdminDashboardPage() {
   };
 
   const pendingUploads = uploads.filter((u) => u.status === 'PENDING');
+  const approvedUploads = uploads.filter((u) => u.status === 'APPROVED');
+  const rejectedUploads = uploads.filter((u) => u.status === 'REJECTED');
+  const filteredUploads = uploads.filter((u) => {
+    if (uploadFilter === 'ALL') return true;
+    return u.status === uploadFilter;
+  });
   const criticalTickets = tickets.filter((t) => t.urgency === 3);
 
   // 1. Initial authentication verification spinner
@@ -464,7 +471,12 @@ export default function AdminDashboardPage() {
         {activeTab === 'kanban' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 min-w-[1000px]">
             {KANBAN_COLUMNS.map((col) => {
-              const colTickets = tickets.filter((t) => t.status === col.id);
+              const colTickets = tickets.filter((t) => {
+                if (col.id === 'REQUIRED') {
+                  return t.status === 'REQUIRED' || t.status === 'ESCALATED';
+                }
+                return t.status === col.id;
+              });
               return (
                 <div
                   key={col.id}
@@ -494,6 +506,12 @@ export default function AdminDashboardPage() {
                           onDragStart={(e) => handleDragStart(e, ticket.id)}
                           className="bg-slate-900/90 border border-slate-800 hover:border-slate-700 rounded-lg p-3.5 shadow-sm cursor-grab active:cursor-grabbing transition"
                         >
+                          {ticket.status === 'ESCALATED' && (
+                            <div className="text-[10px] font-bold text-rose-300 bg-rose-950/80 border border-rose-800/80 px-2 py-0.5 rounded mb-2 flex items-center gap-1">
+                              <Flame className="w-3 h-3 text-rose-400 animate-pulse" />
+                              <span>SDRF RAPID ESCALATION ACTIVE</span>
+                            </div>
+                          )}
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <span className="text-xs font-bold uppercase tracking-wider text-slate-200 bg-slate-800 px-2 py-0.5 rounded">
                               {ticket.hazard_class}
@@ -568,71 +586,164 @@ export default function AdminDashboardPage() {
           </div>
         )}
 
-        {/* TAB 2: CITIZEN UPLOAD APPROVAL QUEUE */}
+        {/* TAB 2: CITIZEN UPLOAD APPROVAL & FIELD FOOTAGE QUEUE */}
         {activeTab === 'uploads' && (
-          <div className="space-y-4 max-w-5xl">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold text-slate-300">Citizen Crowd-Gauged Uploads Awaiting Admin Gate Approval</h2>
-              <span className="text-xs text-slate-400">Total in queue: {pendingUploads.length}</span>
+          <div className="space-y-5 max-w-6xl">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-800/80">
+              <div>
+                <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                  <Video className="w-5 h-5 text-cyan-400" />
+                  Guwahati Field Patrol &amp; Citizen Video Ingestion
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Review monocular flood footage, inspect optical waterlines, and moderate citizen hazard reports.
+                </p>
+              </div>
+
+              {/* Sub-Filter Controls */}
+              <div className="flex items-center gap-1.5 bg-slate-900/90 p-1 rounded-lg border border-slate-800 text-xs font-medium">
+                <button
+                  onClick={() => setUploadFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-md transition ${
+                    uploadFilter === 'ALL'
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  All Footage ({uploads.length})
+                </button>
+                <button
+                  onClick={() => setUploadFilter('PENDING')}
+                  className={`px-3 py-1.5 rounded-md transition ${
+                    uploadFilter === 'PENDING'
+                      ? 'bg-amber-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Pending ({pendingUploads.length})
+                </button>
+                <button
+                  onClick={() => setUploadFilter('APPROVED')}
+                  className={`px-3 py-1.5 rounded-md transition ${
+                    uploadFilter === 'APPROVED'
+                      ? 'bg-emerald-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Approved ({approvedUploads.length})
+                </button>
+                <button
+                  onClick={() => setUploadFilter('REJECTED')}
+                  className={`px-3 py-1.5 rounded-md transition ${
+                    uploadFilter === 'REJECTED'
+                      ? 'bg-rose-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Quarantined ({rejectedUploads.length})
+                </button>
+              </div>
             </div>
 
-            {pendingUploads.length === 0 ? (
+            {filteredUploads.length === 0 ? (
               <div className="p-12 text-center border border-dashed border-slate-800 rounded-xl bg-slate-900/30">
                 <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-3 opacity-60" />
-                <p className="text-sm text-slate-400">Upload queue is empty. All citizen submissions have been verified.</p>
+                <p className="text-sm text-slate-400">No video submissions matching filter &quot;{uploadFilter}&quot;.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {pendingUploads.map((upload) => (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filteredUploads.map((upload) => (
                   <div
                     key={upload.id}
-                    className="p-4 rounded-xl border border-slate-800 bg-slate-900/70 hover:border-slate-700 space-y-3 transition"
+                    className="p-4 rounded-xl border border-slate-800 bg-slate-900/80 hover:border-slate-700 flex flex-col justify-between space-y-3 transition shadow-sm"
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="text-sm font-semibold text-slate-200">{upload.filename}</h3>
-                        <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                          <Clock className="w-3 h-3 text-slate-500" />
-                          Recorded: {new Date(upload.recorded_at).toLocaleString()}
-                        </p>
+                    <div>
+                      {/* Top Header */}
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-semibold text-slate-100 truncate" title={upload.filename}>
+                            {upload.filename}
+                          </h3>
+                          <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5 font-mono">
+                            <Clock className="w-3 h-3 text-slate-500 shrink-0" />
+                            {new Date(upload.recorded_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider shrink-0 uppercase ${
+                            upload.status === 'APPROVED'
+                              ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/40'
+                              : upload.status === 'REJECTED'
+                              ? 'bg-rose-950/60 text-rose-400 border border-rose-800/40'
+                              : 'bg-amber-950/60 text-amber-300 border border-amber-800/40'
+                          }`}
+                        >
+                          {upload.status}
+                        </span>
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-950/60 text-amber-300 border border-amber-800/40">
-                        {upload.status}
-                      </span>
+
+                      {/* Video Player */}
+                      <div className="relative rounded-lg overflow-hidden bg-black/95 border border-slate-800 my-2 aspect-video flex items-center justify-center">
+                        <video
+                          src={`http://localhost:8000/uploads/${upload.filename}`}
+                          controls
+                          preload="metadata"
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+
+                      {/* Geospatial and Description Ledger */}
+                      <div className="text-xs bg-slate-950/70 p-2.5 rounded-lg border border-slate-800/80 space-y-1">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">GPS Coordinates:</span>
+                          <span className="font-mono text-slate-200">{upload.lat.toFixed(4)}, {upload.lng.toFixed(4)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">H3 Res-12 Cell:</span>
+                          <span className="font-mono text-cyan-400 font-semibold">{upload.h3_hex_id}</span>
+                        </div>
+                        {upload.description && (
+                          <div className="pt-1.5 text-slate-300 border-t border-slate-800/60 mt-1 text-[11px] leading-relaxed">
+                            &quot;{upload.description}&quot;
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="text-xs bg-slate-950/70 p-2.5 rounded-lg border border-slate-800/80 space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Coordinates:</span>
-                        <span className="font-mono text-slate-200">{upload.lat.toFixed(4)}, {upload.lng.toFixed(4)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">H3 Hex Res-12:</span>
-                        <span className="font-mono text-blue-400">{upload.h3_hex_id}</span>
-                      </div>
-                      {upload.description && (
-                        <div className="pt-1 text-slate-300 border-t border-slate-800/60 mt-1">
-                          &quot;{upload.description}&quot;
+                    {/* Bottom Status / Action Gate */}
+                    <div className="pt-2">
+                      {upload.status === 'PENDING' && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleApprove(upload.id)}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition cursor-pointer"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Approve &amp; Verify (CV)
+                          </button>
+                          <button
+                            onClick={() => handleReject(upload.id)}
+                            className="px-3 py-2 bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 rounded-lg text-xs font-semibold transition cursor-pointer"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            Quarantine
+                          </button>
                         </div>
                       )}
-                    </div>
 
-                    {/* Approve & Reject Actions */}
-                    <div className="flex items-center gap-2 pt-2">
-                      <button
-                        onClick={() => handleApprove(upload.id)}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition"
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        Approve & Verify (CV)
-                      </button>
-                      <button
-                        onClick={() => handleReject(upload.id)}
-                        className="px-3 py-2 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 rounded-lg text-xs font-semibold transition"
-                      >
-                        <XCircle className="w-4 h-4" />
-                        Quarantine
-                      </button>
+                      {upload.status === 'APPROVED' && (
+                        <div className="text-xs text-emerald-400 flex items-center gap-1.5 bg-emerald-950/30 border border-emerald-800/30 px-2.5 py-1.5 rounded-lg">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span className="font-medium">Verified Field Footage · Integrated into Digital Twin</span>
+                        </div>
+                      )}
+
+                      {upload.status === 'REJECTED' && (
+                        <div className="text-xs text-rose-400 flex items-center gap-1.5 bg-rose-950/30 border border-rose-800/30 px-2.5 py-1.5 rounded-lg">
+                          <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                          <span className="font-medium">Quarantined · Excluded from public routing &amp; map</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

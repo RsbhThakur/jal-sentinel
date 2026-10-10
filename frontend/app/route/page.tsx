@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import FloodMap from '@/components/FloodMap';
+import FloodMap, { RouteEvaluationResult } from '@/components/FloodMap';
 import SOSButton from '@/components/SOSButton';
 import { useFloodTelemetry } from '@/lib/websocket';
 import { fetchEvacuationRoute, EvacuationRouteResponse, EvacuationRouteRequest } from '@/lib/api';
@@ -21,7 +21,9 @@ import {
   RefreshCw, 
   CheckCircle2, 
   Sparkles,
-  Zap
+  Zap,
+  Search,
+  Crosshair
 } from 'lucide-react';
 
 interface LocationPreset {
@@ -59,12 +61,85 @@ export default function EvacuationRoutePage() {
   const [vehicleClass, setVehicleClass] = useState<VehicleClass>('sedan');
   const [originLat, setOriginLat] = useState<string>('26.1448');
   const [originLng, setOriginLng] = useState<string>('91.7365');
+  const [originText, setOriginText] = useState<string>('GS Road Christian Basti');
   const [destinationLat, setDestinationLat] = useState<string>('26.1380');
   const [destinationLng, setDestinationLng] = useState<string>('91.7890');
+  const [destinationText, setDestText] = useState<string>('Dispur Supermarket Relief Post');
 
   const [routeResult, setRouteResult] = useState<EvacuationRouteResponse | null>(null);
+  const [routeEvaluation, setRouteEvaluation] = useState<RouteEvaluationResult | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  const originInputRef = useRef<HTMLInputElement | null>(null);
+  const destInputRef = useRef<HTMLInputElement | null>(null);
+  const originAutocompleteRef = useRef<any>(null);
+  const destAutocompleteRef = useRef<any>(null);
+
+  // Setup Google Places Autocomplete for origin and destination inputs
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const setupAutocomplete = () => {
+      if (!window.google?.maps?.places) return;
+
+      const guwahatiBounds = new window.google.maps.LatLngBounds(
+        new window.google.maps.LatLng(26.00, 91.50),
+        new window.google.maps.LatLng(26.30, 91.95)
+      );
+
+      if (originInputRef.current && !originAutocompleteRef.current) {
+        const auto = new window.google.maps.places.Autocomplete(originInputRef.current, {
+          bounds: guwahatiBounds,
+          componentRestrictions: { country: 'in' },
+          fields: ['formatted_address', 'geometry', 'name'],
+        });
+
+        auto.addListener('place_changed', () => {
+          const place = auto.getPlace();
+          if (place.geometry?.location) {
+            setOriginLat(String(place.geometry.location.lat()));
+            setOriginLng(String(place.geometry.location.lng()));
+            const label = place.name || place.formatted_address || '';
+            setOriginText(label);
+          }
+        });
+        originAutocompleteRef.current = auto;
+      }
+
+      if (destInputRef.current && !destAutocompleteRef.current) {
+        const auto = new window.google.maps.places.Autocomplete(destInputRef.current, {
+          bounds: guwahatiBounds,
+          componentRestrictions: { country: 'in' },
+          fields: ['formatted_address', 'geometry', 'name'],
+        });
+
+        auto.addListener('place_changed', () => {
+          const place = auto.getPlace();
+          if (place.geometry?.location) {
+            setDestinationLat(String(place.geometry.location.lat()));
+            setDestinationLng(String(place.geometry.location.lng()));
+            const label = place.name || place.formatted_address || '';
+            setDestText(label);
+          }
+        });
+        destAutocompleteRef.current = auto;
+      }
+    };
+
+    if (window.google?.maps?.places) {
+      setupAutocomplete();
+    }
+
+    const interval = setInterval(() => {
+      if (window.google?.maps?.places) {
+        setupAutocomplete();
+        clearInterval(interval);
+      }
+    }, 400);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Auto-compute baseline corridor on load
   useEffect(() => {
@@ -97,7 +172,7 @@ export default function EvacuationRoutePage() {
       const result = await fetchEvacuationRoute(payload);
       setRouteResult(result);
     } catch (err: any) {
-      setError(err.message || 'Evacuation corridor computation failed. Street may be fully inundated.');
+      console.warn('Backend routing fallback notice:', err);
     } finally {
       setLoading(false);
     }
@@ -106,11 +181,13 @@ export default function EvacuationRoutePage() {
   const handleApplyOriginPreset = (preset: LocationPreset) => {
     setOriginLat(String(preset.lat));
     setOriginLng(String(preset.lng));
+    setOriginText(preset.name);
   };
 
   const handleApplyDestPreset = (preset: LocationPreset) => {
     setDestinationLat(String(preset.lat));
     setDestinationLng(String(preset.lng));
+    setDestText(preset.name);
   };
 
   return (
@@ -211,23 +288,22 @@ export default function EvacuationRoutePage() {
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-gray-300 uppercase flex items-center justify-between">
                 <span>Origin (GPS / Starting Point)</span>
-                <span className="text-cyan-400 text-[10px] font-mono">WGS-84</span>
+                <span className="text-cyan-400 text-[10px] font-mono">Google Places</span>
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
+                  ref={originInputRef}
                   type="text"
-                  value={originLat}
-                  onChange={(e) => setOriginLat(e.target.value)}
-                  placeholder="Latitude"
-                  className="bg-gray-900 border border-gray-800 text-xs px-3 py-2 rounded-lg font-mono text-white focus:outline-none focus:border-cyan-500"
+                  value={originText}
+                  onChange={(e) => setOriginText(e.target.value)}
+                  placeholder="Search origin in Guwahati (Google Places)..."
+                  className="w-full bg-gray-900 border border-gray-800 text-xs pl-8 pr-3 py-2 rounded-lg font-mono text-white focus:outline-none focus:border-cyan-500 placeholder:text-gray-600"
                 />
-                <input
-                  type="text"
-                  value={originLng}
-                  onChange={(e) => setOriginLng(e.target.value)}
-                  placeholder="Longitude"
-                  className="bg-gray-900 border border-gray-800 text-xs px-3 py-2 rounded-lg font-mono text-white focus:outline-none focus:border-cyan-500"
-                />
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-gray-500 pt-0.5">
+                <span>Lat: {parseFloat(originLat).toFixed(4)}</span>
+                <span>Lng: {parseFloat(originLng).toFixed(4)}</span>
               </div>
               {/* Presets */}
               <div className="flex flex-wrap gap-1 pt-1">
@@ -248,23 +324,22 @@ export default function EvacuationRoutePage() {
             <div className="space-y-1.5 pt-2 border-t border-gray-800">
               <label className="text-[11px] font-bold text-gray-300 uppercase flex items-center justify-between">
                 <span>Safe Haven / Destination</span>
-                <span className="text-emerald-400 text-[10px] font-mono">Higher Ground</span>
+                <span className="text-emerald-400 text-[10px] font-mono">Google Places</span>
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
+                  ref={destInputRef}
                   type="text"
-                  value={destinationLat}
-                  onChange={(e) => setDestinationLat(e.target.value)}
-                  placeholder="Latitude"
-                  className="bg-gray-900 border border-gray-800 text-xs px-3 py-2 rounded-lg font-mono text-white focus:outline-none focus:border-cyan-500"
+                  value={destinationText}
+                  onChange={(e) => setDestText(e.target.value)}
+                  placeholder="Search destination in Guwahati (Google Places)..."
+                  className="w-full bg-gray-900 border border-gray-800 text-xs pl-8 pr-3 py-2 rounded-lg font-mono text-white focus:outline-none focus:border-cyan-500 placeholder:text-gray-600"
                 />
-                <input
-                  type="text"
-                  value={destinationLng}
-                  onChange={(e) => setDestinationLng(e.target.value)}
-                  placeholder="Longitude"
-                  className="bg-gray-900 border border-gray-800 text-xs px-3 py-2 rounded-lg font-mono text-white focus:outline-none focus:border-cyan-500"
-                />
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-gray-500 pt-0.5">
+                <span>Lat: {parseFloat(destinationLat).toFixed(4)}</span>
+                <span>Lng: {parseFloat(destinationLng).toFixed(4)}</span>
               </div>
               {/* Presets */}
               <div className="flex flex-wrap gap-1 pt-1">
@@ -379,6 +454,13 @@ export default function EvacuationRoutePage() {
               hazards={hazards}
               horizon={horizon}
               routeGeoJson={routeResult}
+              activeRouteInfo={{
+                origin: { lat: parseFloat(originLat), lng: parseFloat(originLng), name: originText },
+                destination: { lat: parseFloat(destinationLat), lng: parseFloat(destinationLng), name: destinationText },
+                vehicleClass,
+                isManualRoute: true
+              }}
+              onRouteEvaluated={(evalRes) => setRouteEvaluation(evalRes)}
             />
           </div>
         </div>

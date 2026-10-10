@@ -1,7 +1,9 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from backend.config import settings
 from backend.database import init_db
 from backend.routers import health, hazards, ws, video, routing, flood, admin, tickets, sos
@@ -68,6 +70,16 @@ app.include_router(flood.router)
 app.include_router(admin.router)
 app.include_router(tickets.router)
 app.include_router(sos.router)
+
+# Mount static media directories for uploaded and sample demo videos
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+SAMPLE_VIDEOS_DIR = os.path.join(os.getcwd(), "sample_videos")
+if os.path.exists(SAMPLE_VIDEOS_DIR):
+    app.mount("/sample_videos", StaticFiles(directory=SAMPLE_VIDEOS_DIR), name="sample_videos")
+
 
 
 @app.get("/", tags=["root"])
