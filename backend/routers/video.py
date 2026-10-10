@@ -1,8 +1,11 @@
 import os
 import shutil
 import tempfile
-from datetime import datetime, timezone
+import uuid
+import logging
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
+import aiofiles
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Depends, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +18,9 @@ from backend.utils.geospatial import geo_to_h3
 from backend.workers.cv_pipeline import process_video_waterline
 from backend.workers.temporal_repair import run_temporal_cross_reference
 from backend.utils.cache import get_telemetry_cache
+
+logger = logging.getLogger("jal_sentinel.video")
+
 
 router = APIRouter(prefix="/api/video", tags=["video"])
 
@@ -161,38 +167,132 @@ async def list_registered_cameras():
 @router.post("/upload", response_model=VideoUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_citizen_video(
     file: UploadFile = File(..., description="Uploaded citizen or municipal patrol video clip"),
-    lat: float = Form(26.1448),
-    lng: float = Form(91.7365),
-    recorded_at: Optional[str] = Form(None),
-    description: Optional[str] = Form(None),
+    lat: float = Form(..., description="Latitude coordinate from GPS"),
+    lng: float = Form(..., description="Longitude coordinate from GPS"),
+    timestamp: Optional[str] = Form(None, description="ISO 8601 recording timestamp embedded by client"),
+    recorded_at: Optional[str] = Form(None, description="Legacy alias for timestamp"),
+    description: Optional[str] = Form(None, description="Optional description of flood/hazard observed"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Ingests citizen crowd-gauged video uploads with GPS tagging.
+    Ingests citizen crowd-gauged video uploads with GPS tagging and timestamp validation.
+    Enforces validation:
+      - Timestamp must be within the last 24 hours.
+      - Future-dated timestamps (>1 minute ahead) rejected with HTTP 422.
+      - Old timestamps (>24 hours ago) rejected with HTTP 422.
+    Saves file asynchronously to uploads/ directory with UUID-based filename.
     Persists metadata with PENDING status awaiting administrative gate verification.
+    Does NOT trigger CV processing yet.
     """
-    hex_id = geo_to_h3(lat, lng, resolution=12)
-    parsed_recorded_at = datetime.now(timezone.utc)
-    if recorded_at:
-        try:
-            parsed_recorded_at = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
-        except Exception:
-            pass
+    # 1. Coordinate spatial validation
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lng <= 180.0):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid geographic coordinates: lat={lat}, lng={lng}"
+        )
 
-    saved_filename = f"upload_{int(datetime.now(timezone.utc).timestamp())}_{file.filename}"
+    # 2. Timestamp temporal validation
+    ts_str = timestamp or recorded_at
+    now_utc = datetime.now(timezone.utc)
+    if ts_str:
+        try:
+            # Handle ISO formats, including trailing Z
+            clean_ts = ts_str.replace("Z", "+00:00")
+            parsed_ts = datetime.fromisoformat(clean_ts)
+            if parsed_ts.tzinfo is None:
+                parsed_ts = parsed_ts.replace(tzinfo=timezone.utc)
+            else:
+                parsed_ts = parsed_ts.astimezone(timezone.utc)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid timestamp format '{ts_str}'. Expected valid ISO 8601 datetime: {str(e)}"
+            )
+
+        # Check future-dated (> 1 min ahead)
+        if parsed_ts > now_utc + timedelta(minutes=1):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Future-dated uploads rejected: timestamp cannot be more than 1 minute ahead of server time."
+            )
+
+        # Check stale / old (> 24 hr ago)
+        if parsed_ts < now_utc - timedelta(hours=24):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Stale uploads rejected: timestamp cannot be older than 24 hours."
+            )
+        effective_recorded_at = parsed_ts
+    else:
+        # Default to current time if no timestamp provided
+        effective_recorded_at = now_utc
+
+    # 3. File extension and async save to uploads/ directory with UUID filename
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in [".mp4", ".mov", ".avi", ".mkv", ".webm"]:
+        ext = ".mp4"
+
+    file_uuid = str(uuid.uuid4())
+    saved_filename = f"{file_uuid}{ext}"
+    destination_path = os.path.join(UPLOAD_DIR, saved_filename)
+
+    try:
+        async with aiofiles.open(destination_path, "wb") as out_file:
+            while chunk := await file.read(1024 * 1024):  # 1MB chunks
+                await out_file.write(chunk)
+    except Exception as e:
+        logger.error(f"Failed to save video upload to disk: {e}")
+        # Synchronous fallback if needed
+        try:
+            with open(destination_path, "wb") as buffer:
+                file.file.seek(0)
+                shutil.copyfileobj(file.file, buffer)
+        except Exception as err:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save video file: {str(err)}"
+            )
+
+    # 4. Snap coordinates to H3 hex resolution 12 deduplication index
+    hex_id = geo_to_h3(lat, lng, resolution=12)
+
+    # 5. Persist record into video_uploads table with PENDING status
     upload = VideoUpload(
+        id=file_uuid,
         filename=saved_filename,
         lat=lat,
         lng=lng,
         h3_hex_id=hex_id,
-        recorded_at=parsed_recorded_at,
+        recorded_at=effective_recorded_at,
         status="PENDING",
         description=description
     )
     db.add(upload)
     await db.commit()
     await db.refresh(upload)
+
+    logger.info(f"Citizen video uploaded: id={upload.id}, file={saved_filename}, h3={hex_id}, status=PENDING")
     return upload
+
+
+@router.get("/pending", response_model=List[VideoUploadResponse], status_code=status.HTTP_200_OK)
+async def list_pending_uploads(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Returns list of citizen video uploads awaiting admin verification (status='PENDING').
+    Used by the Admin Gate queue.
+    """
+    query = (
+        select(VideoUpload)
+        .where(VideoUpload.status == "PENDING")
+        .order_by(VideoUpload.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(query)
+    return result.scalars().all()
+
 
 
 @router.post("/{upload_id}/approve", response_model=dict, status_code=status.HTTP_200_OK)

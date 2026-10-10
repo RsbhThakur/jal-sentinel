@@ -32,6 +32,8 @@ uploads/
 out/
 build/
 dist/
+*.tsbuildinfo
+
 
 # Logs
 logs

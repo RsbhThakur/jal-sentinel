@@ -144,7 +144,10 @@ async def test_websocket_broadcast_on_solve():
             solutions = await solve_and_cache_flood_spread(broadcast_websocket=True)
             t1 = time.perf_counter()
 
+            # Read frame until flood packet arrives (skipping periodic heartbeat ticks if any)
             frame = websocket.receive_json()
+            if frame["type"] != "flood":
+                frame = websocket.receive_json()
             t2 = time.perf_counter()
 
             delivery_time_s = t2 - t1
@@ -153,4 +156,5 @@ async def test_websocket_broadcast_on_solve():
             assert frame["payload"]["type"] == "FeatureCollection"
             assert delivery_time_s < 2.0, "Flood update exceeded 2 s broadcast budget"
             assert len(frame["payload"]["features"]) >= 3
+
 
