@@ -1,0 +1,46 @@
+[
+  {
+    "id": "pump-bharalu-01",
+    "name": "Bharalumukh River Outfall Sluice & Pumping Station #1",
+    "basin": "Bharalu",
+    "lat": 26.1750,
+    "lng": 91.7300,
+    "max_discharge_cusecs": 1200,
+    "total_pumps": 6,
+    "sluice_gates": 4,
+    "operational_status": "ONLINE"
+  },
+  {
+    "id": "pump-gsroad-02",
+    "name": "Christian Basti Stormwater Lift Station #2",
+    "basin": "GS Road",
+    "lat": 26.1430,
+    "lng": 91.7380,
+    "max_discharge_cusecs": 650,
+    "total_pumps": 4,
+    "sluice_gates": 2,
+    "operational_status": "ONLINE"
+  },
+  {
+    "id": "pump-zooroad-03",
+    "name": "RG Baruah (Zoo) Road Tiniali Canal Regulator #3",
+    "basin": "RG Baruah",
+    "lat": 26.1510,
+    "lng": 91.7460,
+    "max_discharge_cusecs": 800,
+    "total_pumps": 4,
+    "sluice_gates": 3,
+    "operational_status": "ONLINE"
+  },
+  {
+    "id": "pump-morabharalu-04",
+    "name": "Mora Bharalu Interceptor Station #4",
+    "basin": "Mora Bharalu",
+    "lat": 26.1380,
+    "lng": 91.7650,
+    "max_discharge_cusecs": 950,
+    "total_pumps": 5,
+    "sluice_gates": 3,
+    "operational_status": "ONLINE"
+  }
+]
