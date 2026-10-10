@@ -55,3 +55,15 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Media, sample videos & generator tooling
+*.mp4
+*.avi
+*.mov
+*.webm
+*.mkv
+sample_videos/
+generate_sample_videos.py
+test_sample_videos.py
+
+
