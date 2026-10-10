@@ -1,6 +1,6 @@
-from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime, timezone
+from typing import Optional, List, Any, Union, Literal
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -172,4 +172,56 @@ class FloodPredictionResponse(BaseModel):
     horizon: str
     timestamp: str
     features: List[FloodPolygonFeature]
+
+
+# ==============================================================================
+# WebSocket Telemetry Broadcaster Schemas (Sprint 5: Issue #9)
+# ==============================================================================
+
+class DepthTelemetryPayload(BaseModel):
+    """Real-time optical depth gauge measurement packet."""
+    camera_id: str
+    depth_cm: float
+    dhdt_mm_min: float
+    status: str
+    location: Optional[str] = None
+    temporal_weight: Optional[float] = None
+    recorded_at: Optional[str] = None
+
+
+class TelemetryMessage(BaseModel):
+    """
+    Unified real-time streaming telemetry message format pushed over
+    ws://localhost:8000/ws/telemetry.
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    type: str = Field(
+        ...,
+        description="Packet category: 'flood', 'depth', 'hazard', 'route', or 'ping'"
+    )
+    payload: Any = Field(
+        default_factory=dict,
+        description="Arbitrary typed telemetry payload (GeoJSON, Gauge metrics, or system status)"
+    )
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="ISO-8601 UTC timestamp of packet emission"
+    )
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        allowed = {"flood", "depth", "hazard", "route", "ping"}
+        if v not in allowed:
+            raise ValueError(f"Invalid telemetry message type '{v}'. Allowed types: {sorted(allowed)}")
+        return v
+
+
+class WebSocketClientAction(BaseModel):
+    """Client request packet sent to /ws/telemetry."""
+    action: Optional[str] = None
+    type: Optional[str] = None
+    horizon: Optional[str] = None
+    camera_id: Optional[str] = None
 

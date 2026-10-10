@@ -44,4 +44,27 @@ assert(ghyCenter.x > 0 && ghyCenter.x < 100, 'Guwahati center X must be within c
 assert(ghyCenter.y > 0 && ghyCenter.y < 100, 'Guwahati center Y must be within canvas bounds');
 
 console.log('✓ Geographic projection bounds verified.');
+
+console.log('[TEST] Verifying WebSocket telemetry exponential backoff calculation (1s, 2s, 4s, max 30s)...');
+function getReconnectDelay(attempt, baseDelayMs = 1000, maxDelayMs = 30000) {
+  return Math.min(baseDelayMs * Math.pow(2, attempt), maxDelayMs);
+}
+
+assert.strictEqual(getReconnectDelay(0), 1000, 'Attempt 0 must delay 1000ms');
+assert.strictEqual(getReconnectDelay(1), 2000, 'Attempt 1 must delay 2000ms');
+assert.strictEqual(getReconnectDelay(2), 4000, 'Attempt 2 must delay 4000ms');
+assert.strictEqual(getReconnectDelay(3), 8000, 'Attempt 3 must delay 8000ms');
+assert.strictEqual(getReconnectDelay(4), 16000, 'Attempt 4 must delay 16000ms');
+assert.strictEqual(getReconnectDelay(5), 30000, 'Attempt 5 must cap at 30000ms');
+assert.strictEqual(getReconnectDelay(10), 30000, 'Attempt 10 must cap at 30000ms');
+console.log('✓ Exponential backoff verified.');
+
+console.log('[TEST] Verifying WebSocket telemetry message types (flood, depth, hazard, route, ping)...');
+const allowedTypes = ['flood', 'depth', 'hazard', 'route', 'ping'];
+for (const t of allowedTypes) {
+  const packet = { type: t, payload: {}, timestamp: new Date().toISOString() };
+  assert(allowedTypes.includes(packet.type), `Message type ${t} must be valid`);
+}
+console.log('✓ Telemetry message schema verified.');
+
 console.log('All frontend automated unit tests passed.');

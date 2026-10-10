@@ -1,16 +1,28 @@
 /**
- * JAL-SENTINEL WebSocket Telemetry Client & React Hook
- * Manages low-latency real-time telemetry connections with auto-reconnect backoff.
+ * JAL-SENTINEL WebSocket Telemetry Client & React Hook (Issue #9)
+ * Manages low-latency real-time telemetry connections with auto-reconnect backoff
+ * and dispatches all stream events into the Zustand global store.
  */
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
+import {
+  useTelemetryStore,
+  TelemetryMessage,
+  TelemetryMessageType,
+  FloodGeoJson,
+  FloodPolygonFeature,
+  DepthTelemetry,
+  HazardPinData
+} from './store';
 
-export type TelemetryMessageType = 'flood' | 'depth' | 'hazard' | 'route' | 'ping';
-
-export interface TelemetryMessage<T = unknown> {
-  type: TelemetryMessageType;
-  payload: T;
-  timestamp: string;
-}
+export type {
+  TelemetryMessage,
+  TelemetryMessageType,
+  FloodGeoJson,
+  FloodPolygonFeature,
+  DepthTelemetry,
+  HazardPinData
+};
+export { useTelemetryStore };
 
 export type MessageHandler = (message: TelemetryMessage) => void;
 
@@ -19,9 +31,10 @@ export class TelemetryWebSocketClient {
   private url: string;
   private handlers: Set<MessageHandler> = new Set();
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 10;
+  private maxReconnectAttempts = 20;
   private baseDelayMs = 1000;
   private shouldReconnect = true;
+  private reconnectTimer: NodeJS.Timeout | null = null;
 
   constructor(url?: string) {
     this.url = url || (process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/telemetry');
@@ -37,12 +50,28 @@ export class TelemetryWebSocketClient {
       this.ws.onopen = () => {
         console.log('[WS] Connected to JAL-SENTINEL telemetry stream');
         this.reconnectAttempts = 0;
-        this.handlers.forEach((h) => h({ type: 'ping', payload: { connected: true }, timestamp: new Date().toISOString() }));
+        useTelemetryStore.getState().setConnected(true);
+        const pingNotice: TelemetryMessage = {
+          type: 'ping',
+          payload: { connected: true },
+          timestamp: new Date().toISOString()
+        };
+        this.handlers.forEach((h) => h(pingNotice));
       };
 
       this.ws.onmessage = (event) => {
         try {
           const data: TelemetryMessage = JSON.parse(event.data);
+
+          // If ping packet received, send pong to update server activity timestamp
+          if (data.type === 'ping') {
+            this.send({ type: 'pong', timestamp: new Date().toISOString() });
+          }
+
+          // Dispatch to Zustand global store
+          useTelemetryStore.getState().dispatchMessage(data);
+
+          // Dispatch to external subscribers
           this.handlers.forEach((handler) => handler(data));
         } catch (err) {
           console.warn('[WS] Failed to parse telemetry packet:', err);
@@ -51,7 +80,13 @@ export class TelemetryWebSocketClient {
 
       this.ws.onclose = () => {
         console.warn('[WS] Telemetry socket disconnected');
-        this.handlers.forEach((h) => h({ type: 'ping', payload: { connected: false }, timestamp: new Date().toISOString() }));
+        useTelemetryStore.getState().setConnected(false);
+        const disconnectNotice: TelemetryMessage = {
+          type: 'ping',
+          payload: { connected: false },
+          timestamp: new Date().toISOString()
+        };
+        this.handlers.forEach((h) => h(disconnectNotice));
         if (this.shouldReconnect) {
           this.scheduleReconnect();
         }
@@ -82,25 +117,35 @@ export class TelemetryWebSocketClient {
 
   public disconnect(): void {
     this.shouldReconnect = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
+    useTelemetryStore.getState().setConnected(false);
   }
 
-  private scheduleReconnect(): void {
+  public scheduleReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error('[WS] Max reconnect attempts exceeded.');
       return;
     }
 
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s
     const delay = Math.min(
       this.baseDelayMs * Math.pow(2, this.reconnectAttempts),
       30000
     );
     this.reconnectAttempts++;
     console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})...`);
-    setTimeout(() => this.connect(), delay);
+    this.reconnectTimer = setTimeout(() => this.connect(), delay);
+  }
+
+  public getReconnectDelayForAttempt(attempt: number): number {
+    return Math.min(this.baseDelayMs * Math.pow(2, attempt), 30000);
   }
 }
 
@@ -115,76 +160,28 @@ export function getSharedTelemetryClient(): TelemetryWebSocketClient {
   return sharedClient;
 }
 
-export interface FloodPolygonFeature {
-  type: string;
-  id: string;
-  properties: {
-    zone_name: string;
-    depth_cm: number;
-    surge_velocity_mm_min: number;
-    manning_roughness: number;
-    clearance_blocked: boolean;
-    horizon: string;
-  };
-  geometry: {
-    type: string;
-    coordinates: number[][][];
-  };
-}
-
-export interface FloodGeoJson {
-  type: string;
-  horizon: string;
-  timestamp: string;
-  features: FloodPolygonFeature[];
-}
-
-export interface DepthTelemetry {
-  depth_cm: number;
-  dhdt_mm_min: number;
-  status: string;
-  camera_id: string;
-  location: string;
-}
-
+/**
+ * Custom React Hook useFloodTelemetry()
+ * Subscribes to real-time flood polygons, depth gauges, and hazard events
+ * backed by the Zustand global store.
+ */
 export function useFloodTelemetry() {
-  const [connected, setConnected] = useState<boolean>(false);
-  const [horizon, setHorizonState] = useState<'T+0' | 'T+15' | 'T+30' | 'T+60'>('T+15');
-  const [floodData, setFloodData] = useState<FloodGeoJson | null>(null);
-  const [depthData, setDepthData] = useState<DepthTelemetry>({
-    depth_cm: 18.2,
-    dhdt_mm_min: 2.4,
-    status: 'SURGING',
-    camera_id: 'CAM-GHY-04',
-    location: 'GS Road Christian Basti'
-  });
+  const connected = useTelemetryStore((s) => s.connected);
+  const horizon = useTelemetryStore((s) => s.horizon);
+  const floodData = useTelemetryStore((s) => s.floodData);
+  const depthData = useTelemetryStore((s) => s.depthData);
+  const hazards = useTelemetryStore((s) => s.hazards);
+  const routeData = useTelemetryStore((s) => s.routeData);
 
   const clientRef = useRef<TelemetryWebSocketClient | null>(null);
 
   useEffect(() => {
     const client = getSharedTelemetryClient();
     clientRef.current = client;
-
-    const unsubscribe = client.subscribe((msg) => {
-      if (msg.type === 'ping') {
-        const payload = msg.payload as { connected: boolean };
-        setConnected(Boolean(payload.connected));
-      } else if (msg.type === 'flood') {
-        setFloodData(msg.payload as FloodGeoJson);
-        setConnected(true);
-      } else if (msg.type === 'depth') {
-        setDepthData(msg.payload as DepthTelemetry);
-        setConnected(true);
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
   }, []);
 
   const setHorizon = useCallback((newHorizon: 'T+0' | 'T+15' | 'T+30' | 'T+60') => {
-    setHorizonState(newHorizon);
+    useTelemetryStore.getState().setHorizon(newHorizon);
     if (clientRef.current) {
       clientRef.current.send({ action: 'set_horizon', horizon: newHorizon });
     }
@@ -195,6 +192,8 @@ export function useFloodTelemetry() {
     horizon,
     floodData,
     depthData,
+    hazards,
+    routeData,
     setHorizon
   };
 }

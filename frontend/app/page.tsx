@@ -29,7 +29,14 @@ export default function HomePage() {
   const [selectedHazard, setSelectedHazard] = useState<HazardPinData | null>(null);
 
   // Real-time WebSocket Telemetry Hook
-  const { connected: wsConnected, horizon, floodData, depthData, setHorizon } = useFloodTelemetry();
+  const { connected: wsConnected, horizon, floodData, depthData, hazards: wsHazards, setHorizon } = useFloodTelemetry();
+
+  // Sync hazard events received over WebSocket telemetry
+  useEffect(() => {
+    if (wsHazards && wsHazards.length > 0) {
+      setHazards(wsHazards);
+    }
+  }, [wsHazards]);
 
   // Clock tick
   useEffect(() => {
