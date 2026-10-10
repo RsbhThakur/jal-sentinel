@@ -43,6 +43,73 @@ export function getChoroplethColor(depthCm: number): { fill: string; stroke: str
   }
 }
 
+// High-tech dark style for Google Maps basemap matching JAL-SENTINEL dark aesthetic
+const darkGoogleMapStyles = [
+  { elementType: "geometry", stylers: [{ color: "#0f172a" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#0f172a" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#94a3b8" }] },
+  {
+    featureType: "administrative.locality",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#38bdf8" }],
+  },
+  {
+    featureType: "poi",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#94a3b8" }],
+  },
+  {
+    featureType: "poi.park",
+    elementType: "geometry",
+    stylers: [{ color: "#1e293b" }],
+  },
+  {
+    featureType: "road",
+    elementType: "geometry",
+    stylers: [{ color: "#334155" }],
+  },
+  {
+    featureType: "road",
+    elementType: "geometry.stroke",
+    stylers: [{ color: "#1e293b" }],
+  },
+  {
+    featureType: "road",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#cbd5e1" }],
+  },
+  {
+    featureType: "road.highway",
+    elementType: "geometry",
+    stylers: [{ color: "#1e3a8a" }],
+  },
+  {
+    featureType: "road.highway",
+    elementType: "geometry.stroke",
+    stylers: [{ color: "#1e293b" }],
+  },
+  {
+    featureType: "road.highway",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#60a5fa" }],
+  },
+  {
+    featureType: "transit",
+    elementType: "geometry",
+    stylers: [{ color: "#1e293b" }],
+  },
+  {
+    featureType: "water",
+    elementType: "geometry",
+    stylers: [{ color: "#082f49" }],
+  },
+  {
+    featureType: "water",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#38bdf8" }],
+  },
+];
+
 export default function FloodMap({
   floodGeoJson,
   hazards = [],
@@ -50,7 +117,13 @@ export default function FloodMap({
   onSelectHazard,
   routeGeoJson
 }: FloodMapProps) {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const googleMapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const polygonsRef = useRef<any[]>([]);
+  const markersRef = useRef<any[]>([]);
+  const routePolylineRef = useRef<any>(null);
+  const activeInfoWindowRef = useRef<any>(null);
+
   const [googleMapsLoaded, setGoogleMapsLoaded] = useState<boolean>(false);
   const [zoomLevel, setZoomLevel] = useState<number>(14);
   const [activeFilter, setActiveFilter] = useState<string>('all');
@@ -58,15 +131,21 @@ export default function FloodMap({
 
   const googleApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 
-  // Check if Google Maps Script is already loaded or load dynamically
+  // 1. Load Google Maps Script
   useEffect(() => {
     if (!googleApiKey || googleApiKey.includes('MOCK')) {
-      // Use resilient digital twin radar fallback
       return;
     }
 
-    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps) {
+    if (typeof window !== 'undefined' && window.google?.maps) {
       setGoogleMapsLoaded(true);
+      return;
+    }
+
+    // Check if script element already exists
+    const existingScript = document.querySelector('script[src*="maps.googleapis.com"]');
+    if (existingScript) {
+      existingScript.addEventListener('load', () => setGoogleMapsLoaded(true));
       return;
     }
 
@@ -81,15 +160,180 @@ export default function FloodMap({
     document.head.appendChild(script);
   }, [googleApiKey]);
 
-  // Filter hazards
+  // 2. Initialize Real Google Map Instance
+  useEffect(() => {
+    if (!googleMapsLoaded || !googleMapRef.current || !window.google?.maps) return;
+
+    if (!mapInstanceRef.current) {
+      const map = new window.google.maps.Map(googleMapRef.current, {
+        center: { lat: GUWAHATI_LAT, lng: GUWAHATI_LNG },
+        zoom: zoomLevel,
+        styles: darkGoogleMapStyles,
+        disableDefaultUI: false,
+        zoomControl: false,
+        mapTypeControl: true,
+        mapTypeControlOptions: {
+          position: window.google.maps.ControlPosition.TOP_RIGHT,
+        },
+        streetViewControl: false,
+        fullscreenControl: false,
+      });
+
+      map.addListener('zoom_changed', () => {
+        setZoomLevel(map.getZoom() || 14);
+      });
+
+      mapInstanceRef.current = map;
+    }
+  }, [googleMapsLoaded]);
+
+  // 3. Filter hazards
   const filteredHazards = useMemo(() => {
     if (activeFilter === 'all') return hazards;
     if (activeFilter === 'submerged') return hazards.filter((h) => h.submerged);
     return hazards.filter((h) => h.hazard_class === activeFilter);
   }, [hazards, activeFilter]);
 
-  // Bounding box mapping for SVG Digital Twin radar projection
-  // Lat: 26.1300 to 26.1650, Lng: 91.7100 to 91.7900
+  // 4. Update Google Maps Polygons when floodGeoJson changes
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !window.google?.maps) return;
+
+    // Clear previous polygons
+    polygonsRef.current.forEach((p) => p.setMap(null));
+    polygonsRef.current = [];
+
+    if (!floodGeoJson?.features) return;
+
+    floodGeoJson.features.forEach((feature) => {
+      const coords = feature.geometry.coordinates[0];
+      if (!coords || !coords.length) return;
+
+      const path = coords.map(([lng, lat]) => ({ lat, lng }));
+      const depth = feature.properties.depth_cm;
+      const color = getChoroplethColor(depth);
+
+      const polygon = new window.google.maps.Polygon({
+        paths: path,
+        strokeColor: color.stroke,
+        strokeOpacity: 0.9,
+        strokeWeight: 2,
+        fillColor: color.fill,
+        fillOpacity: color.opacity,
+        map,
+        zIndex: 10,
+      });
+
+      polygon.addListener('mouseover', () => {
+        setHoveredPolygon(feature);
+        polygon.setOptions({ strokeColor: '#FFFFFF', strokeWeight: 3 });
+      });
+
+      polygon.addListener('mouseout', () => {
+        setHoveredPolygon(null);
+        polygon.setOptions({ strokeColor: color.stroke, strokeWeight: 2 });
+      });
+
+      polygonsRef.current.push(polygon);
+    });
+  }, [floodGeoJson, googleMapsLoaded]);
+
+  // 5. Update Google Maps Route Polyline
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !window.google?.maps) return;
+
+    if (routePolylineRef.current) {
+      routePolylineRef.current.setMap(null);
+      routePolylineRef.current = null;
+    }
+
+    if (routeGeoJson?.geometry?.coordinates) {
+      const path = routeGeoJson.geometry.coordinates.map(([lng, lat]: [number, number]) => ({
+        lat,
+        lng,
+      }));
+
+      const polyline = new window.google.maps.Polyline({
+        path,
+        strokeColor: '#00E5FF',
+        strokeOpacity: 0.95,
+        strokeWeight: 5,
+        map,
+        zIndex: 25,
+      });
+
+      routePolylineRef.current = polyline;
+    }
+  }, [routeGeoJson, googleMapsLoaded]);
+
+  // 6. Update Google Maps Markers for Hazard Pins
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !window.google?.maps) return;
+
+    // Clear previous markers
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
+
+    filteredHazards.forEach((hazard) => {
+      const isSub = Boolean(hazard.submerged);
+      const pinColor = isSub ? '#EF4444' : hazard.hazard_class === 'live_wire' ? '#F59E0B' : '#F97316';
+
+      const marker = new window.google.maps.Marker({
+        position: { lat: hazard.lat, lng: hazard.lng },
+        map,
+        title: `${hazard.hazard_class.toUpperCase()} ${isSub ? '(SUBMERGED)' : ''}`,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          fillColor: pinColor,
+          fillOpacity: 1.0,
+          strokeColor: '#FFFFFF',
+          strokeWeight: 2.5,
+          scale: isSub ? 10 : 8,
+        },
+        zIndex: 30,
+      });
+
+      const infoContent = `
+        <div style="color: #0f172a; font-family: system-ui, sans-serif; font-size: 12px; padding: 4px; min-width: 180px;">
+          <div style="font-weight: 700; color: ${pinColor}; font-size: 13px; text-transform: uppercase;">
+            ${hazard.hazard_class.replace('_', ' ')} ${isSub ? '⚠️ SUBMERGED' : ''}
+          </div>
+          <div style="margin-top: 4px; font-size: 11px; color: #475569; line-height: 1.4;">
+            Confidence: <b>${(hazard.confidence_score * 100).toFixed(0)}%</b><br/>
+            ${hazard.depth_cm !== undefined ? `Depth: <b>${hazard.depth_cm} cm</b><br/>` : ''}
+            H3: <code style="font-size: 10px; background: #e2e8f0; padding: 1px 3px; border-radius: 2px;">${hazard.h3_hex_id}</code>
+          </div>
+          ${hazard.notes ? `<div style="margin-top: 5px; font-style: italic; color: #334155; font-size: 11px;">"${hazard.notes}"</div>` : ''}
+        </div>
+      `;
+
+      const infoWindow = new window.google.maps.InfoWindow({
+        content: infoContent,
+      });
+
+      marker.addListener('click', () => {
+        activeInfoWindowRef.current?.close();
+        infoWindow.open(map, marker);
+        activeInfoWindowRef.current = infoWindow;
+        onSelectHazard?.(hazard);
+      });
+
+      markersRef.current.push(marker);
+    });
+  }, [filteredHazards, googleMapsLoaded, onSelectHazard]);
+
+  // Synchronize external zoom triggers
+  const handleZoom = (delta: number) => {
+    const newZoom = Math.min(18, Math.max(10, zoomLevel + delta));
+    setZoomLevel(newZoom);
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setZoom(newZoom);
+    }
+  };
+
+  // Fallback SVG projector coordinates (used only when Google Maps is not loaded)
   const projectCoordinates = (lat: number, lng: number) => {
     const minLat = 26.1300;
     const maxLat = 26.1650;
@@ -151,17 +395,17 @@ export default function FloodMap({
         </div>
       </div>
 
-      {/* Zoom and Navigation Controls */}
+      {/* Zoom Controls */}
       <div className="absolute bottom-3 right-3 z-30 flex flex-col gap-1 pointer-events-auto">
         <button 
-          onClick={() => setZoomLevel((z) => Math.min(z + 1, 18))}
+          onClick={() => handleZoom(1)}
           className="p-2 bg-[#111827]/90 hover:bg-gray-800 border border-gray-800 rounded-lg text-gray-300 shadow transition"
           title="Zoom In"
         >
           <ZoomIn className="w-4 h-4" />
         </button>
         <button 
-          onClick={() => setZoomLevel((z) => Math.max(z - 1, 10))}
+          onClick={() => handleZoom(-1)}
           className="p-2 bg-[#111827]/90 hover:bg-gray-800 border border-gray-800 rounded-lg text-gray-300 shadow transition"
           title="Zoom Out"
         >
@@ -169,125 +413,130 @@ export default function FloodMap({
         </button>
       </div>
 
-      {/* Interactive Map Visual Surface */}
-      <div 
-        ref={mapContainerRef}
-        className="relative flex-1 w-full h-full overflow-hidden select-none bg-[#090D16]"
-      >
-        {/* SVG Basemap Grid Lines & Guwahati Arterial Roads */}
-        <svg className="w-full h-full absolute inset-0 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <defs>
-            <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
-              <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#172033" strokeWidth="0.3" />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#grid)" />
+      {/* Primary Visual Surface: Real Google Map Mount */}
+      <div className="relative flex-1 w-full h-full overflow-hidden select-none bg-[#090D16]">
+        {/* Real Google Maps DIV */}
+        <div 
+          ref={googleMapRef}
+          className={`w-full h-full absolute inset-0 ${googleMapsLoaded ? 'block' : 'hidden'}`}
+        />
 
-          {/* Brahmaputra River Upper Boundary */}
-          <path
-            d="M 0,12 Q 25,6 50,14 T 100,10 L 100,0 L 0,0 Z"
-            fill="#0F243A"
-            stroke="#1E3A5F"
-            strokeWidth="0.8"
-          />
+        {/* Resilient Fallback SVG Canvas (Rendered only when Google Maps is not loaded) */}
+        {!googleMapsLoaded && (
+          <div className="w-full h-full relative">
+            <svg className="w-full h-full absolute inset-0 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <defs>
+                <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
+                  <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#172033" strokeWidth="0.3" />
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#grid)" />
 
-          {/* Bharalu River / Drainage Basin Curve */}
-          <path
-            d="M 28,14 Q 35,40 45,55 T 60,85"
-            fill="none"
-            stroke="#0284C7"
-            strokeWidth="1.6"
-            strokeDasharray="2,1"
-          />
-
-          {/* GS Road Arterial Corridor */}
-          <path
-            d="M 22,78 L 48,56 L 72,42 L 95,35"
-            fill="none"
-            stroke="#334155"
-            strokeWidth="2.2"
-          />
-
-          {/* RG Baruah (Zoo) Road Corridor */}
-          <path
-            d="M 48,56 L 56,32 L 80,24"
-            fill="none"
-            stroke="#334155"
-            strokeWidth="1.8"
-          />
-        </svg>
-
-        {/* Dynamic Inundation Polygons Overlay */}
-        <svg className="w-full h-full absolute inset-0 pointer-events-auto" viewBox="0 0 100 100" preserveAspectRatio="none">
-          {floodGeoJson?.features?.map((poly) => {
-            const depth = poly.properties.depth_cm;
-            const style = getChoroplethColor(depth);
-            
-            // Map coordinates to SVG polygon points
-            const pointsString = poly.geometry.coordinates[0]
-              .map(([lng, lat]) => {
-                const p = projectCoordinates(lat, lng);
-                return `${p.x},${p.y}`;
-              })
-              .join(' ');
-
-            return (
-              <polygon
-                key={poly.id}
-                points={pointsString}
-                fill={style.fill}
-                fillOpacity={style.opacity}
-                stroke={style.stroke}
+              {/* Brahmaputra River Upper Boundary */}
+              <path
+                d="M 0,12 Q 25,6 50,14 T 100,10 L 100,0 L 0,0 Z"
+                fill="#0F243A"
+                stroke="#1E3A5F"
                 strokeWidth="0.8"
-                className="cursor-pointer transition-all duration-700 hover:stroke-white hover:stroke-[1.2]"
-                onMouseEnter={() => setHoveredPolygon(poly)}
-                onMouseLeave={() => setHoveredPolygon(null)}
               />
-            );
-          })}
 
-          {/* Dynamic A* Evacuation Route Polyline Overlay */}
-          {routeGeoJson?.geometry?.coordinates && (
-            <polyline
-              points={routeGeoJson.geometry.coordinates
-                .map(([lng, lat]: [number, number]) => {
-                  const p = projectCoordinates(lat, lng);
-                  return `${p.x},${p.y}`;
-                })
-                .join(' ')}
-              fill="none"
-              stroke="#00E5FF"
-              strokeWidth="2.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeDasharray="3 1.5"
-              className="filter drop-shadow-[0_0_8px_rgba(0,229,255,0.8)] animate-pulse"
-            />
-          )}
-        </svg>
+              {/* Bharalu River Curve */}
+              <path
+                d="M 28,14 Q 35,40 45,55 T 60,85"
+                fill="none"
+                stroke="#0284C7"
+                strokeWidth="1.6"
+                strokeDasharray="2,1"
+              />
 
-        {/* Hazard Pins & Submerged Pitfall Radar Overlay */}
-        <div className="absolute inset-0 pointer-events-none">
-          {filteredHazards.map((hazard) => {
-            const pos = projectCoordinates(hazard.lat, hazard.lng);
-            return (
-              <div
-                key={hazard.id}
-                style={{
-                  left: `${pos.x}%`,
-                  top: `${pos.y}%`,
-                  transform: 'translate(-50%, -100%)'
-                }}
-                className="absolute pointer-events-auto z-40"
-              >
-                <HazardPin
-                  hazard={hazard}
-                  onClick={(h) => onSelectHazard?.(h)}
+              {/* GS Road Arterial Corridor */}
+              <path
+                d="M 22,78 L 48,56 L 72,42 L 95,35"
+                fill="none"
+                stroke="#334155"
+                strokeWidth="2.2"
+              />
+
+              {/* RG Baruah (Zoo) Road Corridor */}
+              <path
+                d="M 48,56 L 56,32 L 80,24"
+                fill="none"
+                stroke="#334155"
+                strokeWidth="1.8"
+              />
+            </svg>
+
+            {/* Dynamic Inundation Polygons Overlay for Fallback */}
+            <svg className="w-full h-full absolute inset-0 pointer-events-auto" viewBox="0 0 100 100" preserveAspectRatio="none">
+              {floodGeoJson?.features?.map((poly) => {
+                const depth = poly.properties.depth_cm;
+                const style = getChoroplethColor(depth);
+                const pointsString = poly.geometry.coordinates[0]
+                  .map(([lng, lat]) => {
+                    const p = projectCoordinates(lat, lng);
+                    return `${p.x},${p.y}`;
+                  })
+                  .join(' ');
+
+                return (
+                  <polygon
+                    key={poly.id}
+                    points={pointsString}
+                    fill={style.fill}
+                    fillOpacity={style.opacity}
+                    stroke={style.stroke}
+                    strokeWidth="0.8"
+                    className="cursor-pointer transition-all duration-700 hover:stroke-white hover:stroke-[1.2]"
+                    onMouseEnter={() => setHoveredPolygon(poly)}
+                    onMouseLeave={() => setHoveredPolygon(null)}
+                  />
+                );
+              })}
+
+              {/* Fallback A* Evacuation Route Polyline */}
+              {routeGeoJson?.geometry?.coordinates && (
+                <polyline
+                  points={routeGeoJson.geometry.coordinates
+                    .map(([lng, lat]: [number, number]) => {
+                      const p = projectCoordinates(lat, lng);
+                      return `${p.x},${p.y}`;
+                    })
+                    .join(' ')}
+                  fill="none"
+                  stroke="#00E5FF"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeDasharray="3 1.5"
+                  className="filter drop-shadow-[0_0_8px_rgba(0,229,255,0.8)] animate-pulse"
                 />
-              </div>
-            );
-          })}
-        </div>
+              )}
+            </svg>
+
+            {/* Fallback Hazard Pins Overlay */}
+            <div className="absolute inset-0 pointer-events-none">
+              {filteredHazards.map((hazard) => {
+                const pos = projectCoordinates(hazard.lat, hazard.lng);
+                return (
+                  <div
+                    key={hazard.id}
+                    style={{
+                      left: `${pos.x}%`,
+                      top: `${pos.y}%`,
+                      transform: 'translate(-50%, -100%)'
+                    }}
+                    className="absolute pointer-events-auto z-40"
+                  >
+                    <HazardPin
+                      hazard={hazard}
+                      onClick={(h) => onSelectHazard?.(h)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Hovered Inundation Polygon Tooltip */}
         {hoveredPolygon && (
