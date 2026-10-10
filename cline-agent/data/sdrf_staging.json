@@ -1,0 +1,38 @@
+[
+  {
+    "id": "sdrf-kamrup-01",
+    "name": "SDRF Guwahati Central Staging (Paltan Bazaar)",
+    "lat": 26.1795,
+    "lng": 91.7523,
+    "contact": "+91-361-2237001",
+    "boats_available": 6,
+    "personnel_count": 24
+  },
+  {
+    "id": "sdrf-kamrup-02",
+    "name": "SDRF Dispur Emergency Post (GS Road Chokepoint)",
+    "lat": 26.1415,
+    "lng": 91.7905,
+    "contact": "+91-361-2237002",
+    "boats_available": 4,
+    "personnel_count": 16
+  },
+  {
+    "id": "sdrf-kamrup-03",
+    "name": "SDRF Bharalu Basin Flood Relief Camp (Bharalumukh)",
+    "lat": 26.1738,
+    "lng": 91.7314,
+    "contact": "+91-361-2237003",
+    "boats_available": 8,
+    "personnel_count": 30
+  },
+  {
+    "id": "sdrf-kamrup-04",
+    "name": "SDRF Jalukbari Transit Outpost",
+    "lat": 26.1482,
+    "lng": 91.6625,
+    "contact": "+91-361-2237004",
+    "boats_available": 4,
+    "personnel_count": 18
+  }
+]

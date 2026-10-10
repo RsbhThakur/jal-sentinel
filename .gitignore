@@ -18,6 +18,7 @@ ENV/
 *.sqlite3
 jal_sentinel.db
 data/
+!cline-agent/data/
 uploads/
 
 # Environment files
