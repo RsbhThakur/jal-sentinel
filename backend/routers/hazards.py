@@ -1,12 +1,23 @@
+import shutil
+import tempfile
+import os
 from typing import List, Optional
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile, File, Form, status, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_
+import cv2
 
 from backend.database import get_db
 from backend.models.entities import HazardEvent
 from backend.utils.geospatial import geo_to_h3
+from backend.workers.yolo_detector import (
+    detector,
+    consensus_engine,
+    persist_hazard_detection,
+    HazardDetection
+)
 
 router = APIRouter(prefix="/api/hazards", tags=["hazards"])
 
@@ -70,24 +81,53 @@ GUWAHATI_BASELINE_HAZARDS = [
 ]
 
 
+class HazardRegistrationRequest(BaseModel):
+    hazard_class: str
+    lat: float
+    lng: float
+    confidence_score: float = 0.9
+    notes: Optional[str] = None
+
+
 @router.get("", response_model=dict)
 async def list_hazards(
     hazard_class: Optional[str] = Query(None, description="Filter by hazard class"),
+    bbox: Optional[str] = Query(None, description="Bounding box: min_lng,min_lat,max_lng,max_lat"),
+    hex_id: Optional[str] = Query(None, description="Filter by H3 hex cell index"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Returns active hazard events as a GeoJSON FeatureCollection.
+    Supports spatial bounding box filtering and H3 cell queries.
     Falls back to seeded Guwahati high-risk pins if database table is currently unpopulated.
     """
-    query = select(HazardEvent).where(HazardEvent.false_positive_flag == False)
+    conditions = [HazardEvent.false_positive_flag == False]
+
     if hazard_class:
-        query = query.where(HazardEvent.hazard_class == hazard_class)
-    
+        conditions.append(HazardEvent.hazard_class == hazard_class)
+    if hex_id:
+        conditions.append(HazardEvent.h3_hex_id == hex_id)
+
+    # Bbox filter parsing
+    min_lng, min_lat, max_lng, max_lat = None, None, None, None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) == 4:
+                min_lng, min_lat, max_lng, max_lat = parts
+                conditions.append(HazardEvent.lng >= min_lng)
+                conditions.append(HazardEvent.lng <= max_lng)
+                conditions.append(HazardEvent.lat >= min_lat)
+                conditions.append(HazardEvent.lat <= max_lat)
+        except Exception:
+            pass
+
+    query = select(HazardEvent).where(and_(*conditions))
     result = await db.execute(query)
     db_hazards = result.scalars().all()
 
     features = []
-    
+
     if db_hazards:
         for h in db_hazards:
             features.append({
@@ -112,7 +152,12 @@ async def list_hazards(
         for h in GUWAHATI_BASELINE_HAZARDS:
             if hazard_class and h["hazard_class"] != hazard_class:
                 continue
-            hex_id = geo_to_h3(h["lat"], h["lng"], resolution=12)
+            if bbox and (h["lng"] < min_lng or h["lng"] > max_lng or h["lat"] < min_lat or h["lat"] > max_lat):
+                continue
+            curr_hex = geo_to_h3(h["lat"], h["lng"], resolution=12)
+            if hex_id and curr_hex != hex_id:
+                continue
+
             features.append({
                 "type": "Feature",
                 "id": h["id"],
@@ -124,7 +169,7 @@ async def list_hazards(
                     "id": h["id"],
                     "hazard_class": h["hazard_class"],
                     "confidence_score": h["confidence_score"],
-                    "h3_hex_id": hex_id,
+                    "h3_hex_id": curr_hex,
                     "submerged": h["submerged"],
                     "depth_cm": h["depth_cm"],
                     "notes": h["notes"],
@@ -138,3 +183,86 @@ async def list_hazards(
         "total": len(features),
         "features": features
     }
+
+
+@router.post("/register", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def register_hazard(
+    request: HazardRegistrationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Directly registers or updates a hazard event using H3 Resolution-12 spatial deduplication.
+    """
+    hex_id = geo_to_h3(request.lat, request.lng, resolution=12)
+    detection = HazardDetection(
+        hazard_class=request.hazard_class,
+        confidence=request.confidence_score,
+        bbox=[0, 0, 0, 0],
+        lat=request.lat,
+        lng=request.lng,
+        h3_hex_id=hex_id
+    )
+
+    event, is_new = await persist_hazard_detection(detection, db)
+    return {
+        "status": "created" if is_new else "updated",
+        "id": event.id,
+        "hazard_class": event.hazard_class,
+        "h3_hex_id": event.h3_hex_id,
+        "confidence_score": event.confidence_score,
+        "lat": event.lat,
+        "lng": event.lng
+    }
+
+
+@router.post("/detect", response_model=dict, status_code=status.HTTP_200_OK)
+async def detect_hazards_in_frame(
+    file: UploadFile = File(...),
+    lat: float = Form(26.1448),
+    lng: float = Form(91.7365),
+    require_consensus: bool = Form(False),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Runs YOLOv8 multi-class inference on an uploaded image/frame,
+    evaluates consensus, deduplicates via H3, and persists confirmed hazards.
+    """
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".jpg")
+    try:
+        with os.fdopen(temp_fd, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        frame = cv2.imread(temp_path)
+        if frame is None:
+            raise HTTPException(status_code=400, detail="Invalid image file format")
+
+        hex_id = geo_to_h3(lat, lng, resolution=12)
+        detections = detector.run_inference(frame=frame, lat=lat, lng=lng)
+
+        confirmed_hazards = []
+
+        for d in detections:
+            is_confirmed = True
+            if require_consensus:
+                is_confirmed = consensus_engine.record_frame(hex_id, d.hazard_class, True)
+
+            if is_confirmed:
+                event, is_new = await persist_hazard_detection(d, db)
+                confirmed_hazards.append({
+                    "id": event.id,
+                    "hazard_class": event.hazard_class,
+                    "confidence": event.confidence_score,
+                    "h3_hex_id": event.h3_hex_id,
+                    "status": "created" if is_new else "updated"
+                })
+
+        return {
+            "h3_hex_id": hex_id,
+            "raw_detections_count": len(detections),
+            "confirmed_hazards_count": len(confirmed_hazards),
+            "hazards": confirmed_hazards
+        }
+
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)

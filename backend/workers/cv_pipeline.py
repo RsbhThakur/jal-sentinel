@@ -5,7 +5,7 @@ Computes metric depth and dh/dt rise rates using Planar Inverse Perspective Mapp
 import math
 import time
 import logging
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Any
 from datetime import datetime, timezone
 import numpy as np
 import cv2
