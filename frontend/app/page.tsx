@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import FloodMap, { RouteEvaluationResult } from '@/components/FloodMap';
 import DepthGauge from '@/components/DepthGauge';
@@ -381,6 +381,43 @@ export default function HomePage() {
     setRouteEvaluation(null);
   };
 
+  // Memoize activeRouteInfo to prevent re-creating object reference on each render
+  const memoizedActiveRouteInfo = useMemo(() => {
+    if (!activeRouteReady) return null;
+    return {
+      origin: { lat: originLat, lng: originLng, name: originName },
+      destination: { lat: destLat, lng: destLng, name: destName },
+      vehicleClass,
+      isManualRoute: routeMode === 'manual',
+    };
+  }, [
+    activeRouteReady,
+    originLat,
+    originLng,
+    originName,
+    destLat,
+    destLng,
+    destName,
+    vehicleClass,
+    routeMode,
+  ]);
+
+  // Memoize handleRouteEvaluated to prevent triggering child useEffect
+  const handleRouteEvaluated = useCallback((evalResult: RouteEvaluationResult) => {
+    setRouteEvaluation((prev) => {
+      if (
+        prev &&
+        prev.isClear === evalResult.isClear &&
+        prev.routeType === evalResult.routeType &&
+        prev.distanceMeters === evalResult.distanceMeters &&
+        prev.hazardsAvoided === evalResult.hazardsAvoided
+      ) {
+        return prev;
+      }
+      return evalResult;
+    });
+  }, []);
+
   // Submit Citizen Video Ingestion End-to-End
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -566,17 +603,8 @@ export default function HomePage() {
                 horizon={horizon}
                 onSelectHazard={(h) => setSelectedHazard(h)}
                 routeGeoJson={evacuationRoute}
-                activeRouteInfo={
-                  activeRouteReady
-                    ? {
-                        origin: { lat: originLat, lng: originLng, name: originName },
-                        destination: { lat: destLat, lng: destLng, name: destName },
-                        vehicleClass,
-                        isManualRoute: routeMode === 'manual',
-                      }
-                    : null
-                }
-                onRouteEvaluated={(evalResult) => setRouteEvaluation(evalResult)}
+                activeRouteInfo={memoizedActiveRouteInfo}
+                onRouteEvaluated={handleRouteEvaluated}
               />
             </div>
           </div>

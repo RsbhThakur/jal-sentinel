@@ -227,6 +227,8 @@ export default function FloodMap({
   const routeMarkersRef = useRef<any[]>([]);
   const activeInfoWindowRef = useRef<any>(null);
   const cachedRoadGeometriesRef = useRef<Record<string, Array<{ lat: number; lng: number }>>>({});
+  const lastRenderedRouteKeyRef = useRef<string>('');
+  const lastEvaluatedResultRef = useRef<string>('');
 
   const [googleMapsLoaded, setGoogleMapsLoaded] = useState<boolean>(false);
   const [mapMode, setMapMode] = useState<'dark' | 'satellite'>('dark');
@@ -435,14 +437,6 @@ export default function FloodMap({
     const map = mapInstanceRef.current;
     if (!map || !window.google?.maps) return;
 
-    // Clear previous route polylines
-    routePolylinesRef.current.forEach((item) => item.setMap(null));
-    routePolylinesRef.current = [];
-
-    // Clear previous route markers
-    routeMarkersRef.current.forEach((m) => m.setMap(null));
-    routeMarkersRef.current = [];
-
     // Resolve Origin and Destination
     let origin: { lat: number; lng: number } | null = null;
     let destination: { lat: number; lng: number } | null = null;
@@ -463,9 +457,38 @@ export default function FloodMap({
     }
 
     if (!origin || !destination) {
-      setRouteStatusBadge(null);
+      if (lastRenderedRouteKeyRef.current !== '') {
+        routePolylinesRef.current.forEach((item) => item.setMap(null));
+        routePolylinesRef.current = [];
+        routeMarkersRef.current.forEach((m) => m.setMap(null));
+        routeMarkersRef.current = [];
+        lastRenderedRouteKeyRef.current = '';
+        lastEvaluatedResultRef.current = '';
+        setRouteStatusBadge(null);
+      }
       return;
     }
+
+    // Stable route key guard - prevents infinite re-render loops and map blinking
+    const currentRouteKey = `${origin.lat.toFixed(4)},${origin.lng.toFixed(4)}->${destination.lat.toFixed(4)},${destination.lng.toFixed(4)}|${vClass}|${horizon}|${hazards.length}`;
+    if (lastRenderedRouteKeyRef.current === currentRouteKey) {
+      return; // Route already computed and rendered stably
+    }
+    lastRenderedRouteKeyRef.current = currentRouteKey;
+
+    const clearRouteGraphics = () => {
+      routePolylinesRef.current.forEach((item) => item.setMap(null));
+      routePolylinesRef.current = [];
+      routeMarkersRef.current.forEach((m) => m.setMap(null));
+      routeMarkersRef.current = [];
+    };
+
+    const reportRouteEvaluation = (result: RouteEvaluationResult) => {
+      const resultKey = `${result.isClear}|${result.routeType}|${result.distanceMeters}|${result.hazardsAvoided}`;
+      if (lastEvaluatedResultRef.current === resultKey) return;
+      lastEvaluatedResultRef.current = resultKey;
+      onRouteEvaluated?.(result);
+    };
 
     const travelMode =
       vClass === 'walker'
@@ -474,7 +497,7 @@ export default function FloodMap({
 
     const directionsService = new window.google.maps.DirectionsService();
 
-    // Clearance threshold for current vehicle
+    // Clearance threshold for current vehicle (cm)
     const vehicleClearance =
       vClass === 'walker' ? 15 : vClass === 'scooty' ? 20 : vClass === 'sedan' ? 35 : 55;
 
@@ -488,25 +511,34 @@ export default function FloodMap({
       },
       (res: any, status: any) => {
         if (status === window.google.maps.DirectionsStatus.OK && res?.routes?.length > 0) {
+          clearRouteGraphics();
           const primaryRoute = res.routes[0];
           const primaryPath = primaryRoute.overview_path.map((pt: any) => ({
             lat: pt.lat(),
             lng: pt.lng(),
           }));
 
-          // Check if primary route encounters any hazards or flooded road corridors
-          const relevantHazards = hazards.filter(
-            (h) => Boolean(h.submerged) || (h.confidence_score && h.confidence_score > 0.85)
+          // Only consider hazards that are actively SUBMERGED and exceed the vehicle's clearance limit
+          const severeSubmergedHazards = hazards.filter(
+            (h) => Boolean(h.submerged) && ((h.depth_cm || 25) > vehicleClearance)
           );
 
           let encounteredHazardCount = 0;
           let blockedSegmentPoint: { lat: number; lng: number } | null = null;
 
-          // Check distance between route vertices and known hazards
-          for (const pt of primaryPath) {
-            for (const h of relevantHazards) {
+          // Exclude terminal endpoints (within 60m of departure origin or arrival destination)
+          // to prevent departure coordinates or arrival gates from falsely self-blocking
+          const middlePath = primaryPath.filter((pt: any) => {
+            const distFromStart = computeHaversineDistanceMeters(pt.lat, pt.lng, origin!.lat, origin!.lng);
+            const distFromEnd = computeHaversineDistanceMeters(pt.lat, pt.lng, destination!.lat, destination!.lng);
+            return distFromStart > 60 && distFromEnd > 60;
+          });
+
+          // Check if submerged pitfalls are directly on the driving path (within 20m of street centerline)
+          for (const pt of middlePath) {
+            for (const h of severeSubmergedHazards) {
               const dist = computeHaversineDistanceMeters(pt.lat, pt.lng, h.lat, h.lng);
-              if (dist < 75) {
+              if (dist < 20) {
                 encounteredHazardCount++;
                 if (!blockedSegmentPoint) {
                   blockedSegmentPoint = { lat: h.lat, lng: h.lng };
@@ -515,21 +547,24 @@ export default function FloodMap({
             }
           }
 
-          // Check flooded corridors with depth > vehicle clearance
+          // Check flooded corridors where flood depth exceeds vehicle clearance limit
           const horizonMultiplier =
             horizon === 'T+0' ? 0.6 : horizon === 'T+15' ? 1.0 : horizon === 'T+30' ? 1.45 : 2.0;
 
           GUWAHATI_CORRIDOR_DEFS.forEach((c) => {
             const depth = c.baseDepth * horizonMultiplier;
             if (depth > vehicleClearance) {
-              for (const pt of primaryPath) {
-                const distToStart = computeHaversineDistanceMeters(pt.lat, pt.lng, c.start.lat, c.start.lng);
-                const distToEnd = computeHaversineDistanceMeters(pt.lat, pt.lng, c.end.lat, c.end.lng);
-                if (distToStart < 120 || distToEnd < 120) {
+              // Check if route traverses this flooded road section
+              const midLat = (c.start.lat + c.end.lat) / 2;
+              const midLng = (c.start.lng + c.end.lng) / 2;
+              for (const pt of middlePath) {
+                const distToCorridorMid = computeHaversineDistanceMeters(pt.lat, pt.lng, midLat, midLng);
+                if (distToCorridorMid < 30) {
                   encounteredHazardCount++;
                   if (!blockedSegmentPoint) {
-                    blockedSegmentPoint = c.start;
+                    blockedSegmentPoint = { lat: midLat, lng: midLng };
                   }
+                  break;
                 }
               }
             }
@@ -610,7 +645,7 @@ export default function FloodMap({
               details: `0 hazard blocks or flood obstacles encountered. Standard clear corridor (${(distMeters / 1000).toFixed(1)} km, ~${durMins} mins).`,
             });
 
-            onRouteEvaluated?.({
+            reportRouteEvaluation({
               isClear: true,
               routeType: 'normal',
               distanceMeters: distMeters,
@@ -622,8 +657,33 @@ export default function FloodMap({
             // ========================================================
             // CASE B: HAZARDS ENCOUNTERED - DYNAMIC SAFE DETOUR
             // ========================================================
-            // 1. Color the danger section on the road in RED
+            // 1. Highlight the danger section directly on the roadway in RED
             if (blockedSegmentPoint) {
+              const blockedRoadSegment = primaryPath.filter(
+                (pt: any) =>
+                  computeHaversineDistanceMeters(pt.lat, pt.lng, blockedSegmentPoint!.lat, blockedSegmentPoint!.lng) < 140
+              );
+
+              if (blockedRoadSegment.length >= 2) {
+                const redGlow = new window.google.maps.Polyline({
+                  path: blockedRoadSegment,
+                  strokeColor: '#EF4444',
+                  strokeOpacity: 0.45,
+                  strokeWeight: 14,
+                  map,
+                  zIndex: 32,
+                });
+                const redCore = new window.google.maps.Polyline({
+                  path: blockedRoadSegment,
+                  strokeColor: '#DC2626',
+                  strokeOpacity: 1.0,
+                  strokeWeight: 7,
+                  map,
+                  zIndex: 33,
+                });
+                routePolylinesRef.current.push(redGlow, redCore);
+              }
+
               const hazardSpotMarker = new window.google.maps.Marker({
                 position: blockedSegmentPoint,
                 map,
@@ -634,7 +694,7 @@ export default function FloodMap({
                   fillOpacity: 1.0,
                   strokeColor: '#FFFFFF',
                   strokeWeight: 3,
-                  scale: 11,
+                  scale: 10,
                 },
                 zIndex: 38,
               });
@@ -651,10 +711,15 @@ export default function FloodMap({
                   lat: pt.lat(),
                   lng: pt.lng(),
                 }));
+                const altMiddle = altPath.filter((pt: any) => {
+                  const distFromStart = computeHaversineDistanceMeters(pt.lat, pt.lng, origin!.lat, origin!.lng);
+                  const distFromEnd = computeHaversineDistanceMeters(pt.lat, pt.lng, destination!.lat, destination!.lng);
+                  return distFromStart > 50 && distFromEnd > 50;
+                });
                 let altHazards = 0;
-                for (const pt of altPath) {
-                  for (const h of relevantHazards) {
-                    if (computeHaversineDistanceMeters(pt.lat, pt.lng, h.lat, h.lng) < 75) {
+                for (const pt of altMiddle) {
+                  for (const h of severeSubmergedHazards) {
+                    if (computeHaversineDistanceMeters(pt.lat, pt.lng, h.lat, h.lng) < 20) {
                       altHazards++;
                     }
                   }
@@ -736,7 +801,7 @@ export default function FloodMap({
                 details: `Bypassing ${encounteredHazardCount} submerged hazards/flood chokepoints via high-ground road (${(distM / 1000).toFixed(1)} km, ~${durM} mins).`,
               });
 
-              onRouteEvaluated?.({
+              reportRouteEvaluation({
                 isClear: false,
                 routeType: 'detour',
                 distanceMeters: distM,
@@ -753,8 +818,14 @@ export default function FloodMap({
                 detourLeg.duration?.value ? Math.round(detourLeg.duration.value / 60) : 5
               );
             } else {
-              // Query Google Directions with a safe highland arterial waypoint (e.g. Ganeshguri elevated corridor)
-              const safeWaypoint = GUWAHATI_SAFE_WAYPOINTS[0];
+              // Query Google Directions with a safe highland arterial waypoint
+              const safeWaypoint =
+                GUWAHATI_SAFE_WAYPOINTS.find((wp) => {
+                  const dO = computeHaversineDistanceMeters(wp.lat, wp.lng, origin!.lat, origin!.lng);
+                  const dD = computeHaversineDistanceMeters(wp.lat, wp.lng, destination!.lat, destination!.lng);
+                  return dO > 600 && dD > 600;
+                }) || GUWAHATI_SAFE_WAYPOINTS[0];
+
               directionsService.route(
                 {
                   origin,
@@ -775,7 +846,7 @@ export default function FloodMap({
                       leg?.duration?.value ? Math.round(leg.duration.value / 60) : 6
                     );
                   } else {
-                    // Fallback to primary path with warning
+                    // Fallback to primary path with detour badge
                     drawDetourPolyline(primaryPath, 1400, 5);
                   }
                 }
