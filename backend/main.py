@@ -23,7 +23,15 @@ async def lifespan(app: FastAPI):
         await init_db()
     except Exception as e:
         logger.warning(f"Database initialization deferred or failed: {e}")
+    try:
+        ws.start_broadcaster()
+    except Exception as e:
+        logger.warning(f"WebSocket telemetry broadcaster startup deferred: {e}")
     yield
+    try:
+        await ws.stop_broadcaster()
+    except Exception as e:
+        logger.debug(f"Broadcaster shutdown cleanup: {e}")
     try:
         await close_redis_client()
     except Exception as e:
