@@ -36,7 +36,11 @@ import {
   FileVideo, 
   ChevronRight,
   ShieldCheck,
-  ExternalLink
+  ExternalLink,
+  Sparkles,
+  Compass,
+  Crosshair,
+  Info
 } from 'lucide-react';
 
 type VehicleClass = 'walker' | 'scooty' | 'sedan' | 'suv';
@@ -48,6 +52,29 @@ const VEHICLE_SPECS: Record<VehicleClass, { label: string; clearanceCm: number; 
   suv: { label: 'SUV', clearanceCm: 55, icon: Truck },
 };
 
+interface LocationPreset {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  tag: string;
+}
+
+const ORIGIN_PRESETS: LocationPreset[] = [
+  { id: 'christian_basti', name: 'GS Road Christian Basti', lat: 26.1448, lng: 91.7365, tag: 'Flooded Chokepoint' },
+  { id: 'zoo_road', name: 'Zoo Road Tiniali Chokepoint', lat: 26.1520, lng: 91.7450, tag: 'Waterlogged' },
+  { id: 'bharalu_outfall', name: 'Bharalu Sluice Outfall', lat: 26.1738, lng: 91.7314, tag: 'Drainage Surge' },
+  { id: 'paltan_bazaar', name: 'Paltan Bazaar Railway Station', lat: 26.1795, lng: 91.7523, tag: 'City Center' },
+  { id: 'jalukbari', name: 'Jalukbari Transit Hub', lat: 26.1482, lng: 91.6625, tag: 'West Entry' },
+];
+
+const DESTINATION_PRESETS: LocationPreset[] = [
+  { id: 'khanapara', name: 'Khanapara Highland Relief Post', lat: 26.1150, lng: 91.8020, tag: 'Primary SDRF High Ground' },
+  { id: 'dispur', name: 'Dispur Supermarket Relief Depot', lat: 26.1380, lng: 91.7890, tag: 'Civil Supplies Post' },
+  { id: 'gmch', name: 'Gauhati Medical College (GMCH Hilltop)', lat: 26.1580, lng: 91.7750, tag: 'Medical Trauma Refuge' },
+  { id: 'bharalu_ridge', name: 'Bharalu High Ridge Relief Sanctuary', lat: 26.1738, lng: 91.7314, tag: 'Northern Safe Ridge' },
+];
+
 export default function HomePage() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [apiLoading, setApiLoading] = useState<boolean>(true);
@@ -58,9 +85,20 @@ export default function HomePage() {
   // Real-time WebSocket Telemetry Hook
   const { connected: wsConnected, horizon, floodData, depthData, hazards: wsHazards, setHorizon } = useFloodTelemetry();
 
-  // Evacuation Corridor Routing State
+  // Evacuation Corridor Routing State with Origin / Destination controls
   const [evacuatePanelOpen, setEvacuatePanelOpen] = useState<boolean>(false);
   const [vehicleClass, setVehicleClass] = useState<VehicleClass>('sedan');
+  const [originId, setOriginId] = useState<string>('christian_basti');
+  const [originLat, setOriginLat] = useState<number>(26.1448);
+  const [originLng, setOriginLng] = useState<number>(91.7365);
+  const [originName, setOriginName] = useState<string>('GS Road Christian Basti (Flooded Zone)');
+
+  const [destId, setDestId] = useState<string>('khanapara');
+  const [destLat, setDestLat] = useState<number>(26.1150);
+  const [destLng, setDestLng] = useState<number>(91.8020);
+  const [destName, setDestName] = useState<string>('Khanapara Highland Relief Post (Elevated Ground)');
+
+  const [isDetectingLocation, setIsDetectingLocation] = useState<boolean>(false);
   const [evacuationRoute, setEvacuationRoute] = useState<EvacuationRouteResponse | null>(null);
   const [routeLoading, setRouteLoading] = useState<boolean>(false);
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -163,20 +201,71 @@ export default function HomePage() {
       });
   }, []);
 
-  // Compute Evacuation Route End-to-End
-  const handleCalculateEvacuation = async (overrideClass?: VehicleClass) => {
+  // Detect live GPS location
+  const handleDetectGPS = () => {
+    if (typeof window === 'undefined' || !navigator.geolocation) {
+      alert('Geolocation is not supported by your browser.');
+      return;
+    }
+    setIsDetectingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setIsDetectingLocation(false);
+        setOriginLat(pos.coords.latitude);
+        setOriginLng(pos.coords.longitude);
+        setOriginId('live_gps');
+        setOriginName(`Live GPS (${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)})`);
+      },
+      (err) => {
+        setIsDetectingLocation(false);
+        console.warn('Geolocation detection notice:', err);
+      },
+      { timeout: 7000, enableHighAccuracy: true }
+    );
+  };
+
+  const handleSelectOrigin = (presetId: string) => {
+    setOriginId(presetId);
+    const p = ORIGIN_PRESETS.find((item) => item.id === presetId);
+    if (p) {
+      setOriginLat(p.lat);
+      setOriginLng(p.lng);
+      setOriginName(p.name);
+    }
+  };
+
+  const handleSelectDestination = (destPresetId: string) => {
+    setDestId(destPresetId);
+    const p = DESTINATION_PRESETS.find((item) => item.id === destPresetId);
+    if (p) {
+      setDestLat(p.lat);
+      setDestLng(p.lng);
+      setDestName(p.name);
+    }
+  };
+
+  // Compute Evacuation Route End-to-End avoiding flooded edges & hazards
+  const handleCalculateEvacuation = async (
+    overrideClass?: VehicleClass,
+    customOrigin?: { lat: number; lng: number },
+    customDest?: { lat: number; lng: number }
+  ) => {
     const vClass = overrideClass || vehicleClass;
+    const oLat = customOrigin ? customOrigin.lat : originLat;
+    const oLng = customOrigin ? customOrigin.lng : originLng;
+    const dLat = customDest ? customDest.lat : destLat;
+    const dLng = customDest ? customDest.lng : destLng;
+
     setRouteLoading(true);
     setRouteError(null);
     setEvacuatePanelOpen(true);
 
     try {
-      // Default: Christian Basti (origin) to Dispur Supermarket (safe destination)
       const res = await fetchEvacuationRoute({
-        origin_lat: 26.1448,
-        origin_lng: 91.7365,
-        destination_lat: 26.1380,
-        destination_lng: 91.7890,
+        origin_lat: oLat,
+        origin_lng: oLng,
+        destination_lat: dLat,
+        destination_lng: dLng,
         vehicle_class: vClass
       });
       setEvacuationRoute(res);
@@ -476,11 +565,11 @@ export default function HomePage() {
 
             {/* Interactive In-Page Evacuation Corridor Control Drawer */}
             {evacuatePanelOpen && (
-              <div className="bg-[#111827] border border-cyan-500/40 rounded-2xl p-4 shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="bg-[#111827] border border-cyan-500/40 rounded-2xl p-4 shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-top-2 duration-200">
                 <div className="flex items-center justify-between border-b border-gray-800 pb-2">
                   <span className="text-xs font-bold text-white uppercase flex items-center gap-1.5">
                     <Route className="w-4 h-4 text-cyan-400" />
-                    Dynamic Evacuation Corridor
+                    Dynamic Evacuation Corridor Engine
                   </span>
                   <div className="flex items-center gap-1">
                     <Link
@@ -498,6 +587,74 @@ export default function HomePage() {
                       <X className="w-4 h-4" />
                     </button>
                   </div>
+                </div>
+
+                {/* Educational Engine Purpose Callout */}
+                <div className="bg-cyan-950/30 border border-cyan-800/40 rounded-xl p-3 text-xs space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-cyan-300 font-bold uppercase text-[10px] font-mono">
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                    How Does the Evacuation Engine Work?
+                  </div>
+                  <p className="text-gray-300 text-[11px] leading-relaxed">
+                    Unlike ordinary map navigators that only check traffic congestion and lead vehicles into drowning underpasses, 
+                    JAL-SENTINEL's solver cross-references <b>live millimeter water rise rates (dh/dt)</b>, 
+                    <b>submerged hazard radar</b> (open manholes, live wires, craters), and your <b>vehicle's physical ground clearance</b>. 
+                    It eliminates impassable roads and computes the safest dry route to high-ground sanctuaries.
+                  </p>
+                </div>
+
+                {/* Origin Location Selector */}
+                <div className="space-y-1.5 bg-gray-900/60 p-3 rounded-xl border border-gray-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-emerald-400" />
+                      From (Current Origin)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleDetectGPS}
+                      disabled={isDetectingLocation}
+                      className="text-[10px] font-mono text-cyan-400 hover:text-cyan-300 flex items-center gap-1 bg-cyan-950/40 border border-cyan-800/40 px-2 py-0.5 rounded transition disabled:opacity-50"
+                    >
+                      <Crosshair className={`w-2.5 h-2.5 ${isDetectingLocation ? 'animate-spin' : ''}`} />
+                      {isDetectingLocation ? 'Detecting...' : '📍 Use Live GPS'}
+                    </button>
+                  </div>
+
+                  <select
+                    value={originId}
+                    onChange={(e) => handleSelectOrigin(e.target.value)}
+                    className="w-full bg-gray-950 border border-gray-800 focus:border-cyan-500 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none font-mono"
+                  >
+                    {originId === 'live_gps' && (
+                      <option value="live_gps">📍 {originName}</option>
+                    )}
+                    {ORIGIN_PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} [{p.tag}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Destination Shelter Selector */}
+                <div className="space-y-1.5 bg-gray-900/60 p-3 rounded-xl border border-gray-800">
+                  <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-amber-400" />
+                    To (Safe High-Ground Shelter)
+                  </span>
+
+                  <select
+                    value={destId}
+                    onChange={(e) => handleSelectDestination(e.target.value)}
+                    className="w-full bg-gray-950 border border-gray-800 focus:border-cyan-500 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none font-mono"
+                  >
+                    {DESTINATION_PRESETS.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name} [{d.tag}]
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Vehicle Clearance Switcher */}
@@ -534,7 +691,7 @@ export default function HomePage() {
                 {routeLoading ? (
                   <div className="p-4 rounded-xl bg-gray-900/80 border border-gray-800 flex items-center justify-center gap-2 text-xs text-cyan-400">
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    Calculating dry corridor avoiding submerged pits...
+                    Solving dry road corridor & bypassing hazards...
                   </div>
                 ) : routeError ? (
                   <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
@@ -557,17 +714,19 @@ export default function HomePage() {
                     <div className="flex items-center justify-between">
                       <span className="text-gray-400">Hazards Bypassed:</span>
                       <span className="font-bold font-mono text-amber-400">
-                        {evacuationRoute.properties.submerged_hazards_avoided || 0} Pitfalls
+                        {evacuationRoute.properties.submerged_hazards_avoided || 0} Pitfalls Bypassed
                       </span>
                     </div>
                     <div className="flex items-center justify-between pt-1 border-t border-gray-800 text-[10px] font-mono">
-                      <span className="text-emerald-400 font-bold">CLEARANCE SAFE</span>
+                      <span className="text-emerald-400 font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> CLEARANCE SAFE CORRIDOR
+                      </span>
                       <button
                         type="button"
                         onClick={() => setEvacuationRoute(null)}
                         className="text-gray-500 hover:text-gray-300 underline"
                       >
-                        Clear Corridor
+                        Clear Route
                       </button>
                     </div>
                   </div>
@@ -578,10 +737,10 @@ export default function HomePage() {
                     type="button"
                     onClick={() => handleCalculateEvacuation()}
                     disabled={routeLoading}
-                    className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition"
+                    className="flex-1 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-bold py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 transition active:scale-95 shadow-lg shadow-cyan-600/25"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${routeLoading ? 'animate-spin' : ''}`} />
-                    Recompute A* Corridor
+                    {evacuationRoute ? 'Recompute Safe Corridor' : 'Compute Safe Evacuation Corridor'}
                   </button>
                 </div>
               </div>

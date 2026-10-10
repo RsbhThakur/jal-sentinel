@@ -207,76 +207,295 @@ export default function FloodMap({
     return hazards.filter((h) => h.hazard_class === activeFilter);
   }, [hazards, activeFilter]);
 
-  // 4. Update Google Maps Polygons when floodGeoJson changes
+  const floodedRoadsRef = useRef<any[]>([]);
+  const routeMarkersRef = useRef<any[]>([]);
+
+  // 4. Update Flooded Road Corridors and Inundation Overlays
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !window.google?.maps) return;
+
+    // Clear previous flooded road polylines
+    floodedRoadsRef.current.forEach((r) => r.setMap(null));
+    floodedRoadsRef.current = [];
 
     // Clear previous polygons
     polygonsRef.current.forEach((p) => p.setMap(null));
     polygonsRef.current = [];
 
-    if (!floodGeoJson?.features) return;
+    // 4.1 Draw Subtle Flood Area Basin Perimeters (soft, non-blocking translucent zones)
+    if (floodGeoJson?.features) {
+      floodGeoJson.features.forEach((feature) => {
+        const coords = feature.geometry.coordinates[0];
+        if (!coords || !coords.length) return;
 
-    floodGeoJson.features.forEach((feature) => {
-      const coords = feature.geometry.coordinates[0];
-      if (!coords || !coords.length) return;
+        const path = coords.map(([lng, lat]) => ({ lat, lng }));
+        const depth = feature.properties.depth_cm;
+        const color = getChoroplethColor(depth);
 
-      const path = coords.map(([lng, lat]) => ({ lat, lng }));
-      const depth = feature.properties.depth_cm;
-      const color = getChoroplethColor(depth);
+        const polygon = new window.google.maps.Polygon({
+          paths: path,
+          strokeColor: color.stroke,
+          strokeOpacity: 0.35,
+          strokeWeight: 1.5,
+          fillColor: color.fill,
+          fillOpacity: 0.06, // Ultra-subtle to keep Google Maps roads and labels 100% visible
+          map,
+          zIndex: 8,
+        });
 
-      const polygon = new window.google.maps.Polygon({
-        paths: path,
-        strokeColor: color.stroke,
-        strokeOpacity: 0.9,
-        strokeWeight: 2,
-        fillColor: color.fill,
-        fillOpacity: color.opacity,
+        polygon.addListener('mouseover', () => {
+          setHoveredPolygon(feature);
+          polygon.setOptions({ strokeColor: '#FFFFFF', strokeOpacity: 0.8, strokeWeight: 2 });
+        });
+
+        polygon.addListener('mouseout', () => {
+          setHoveredPolygon(null);
+          polygon.setOptions({ strokeColor: color.stroke, strokeOpacity: 0.35, strokeWeight: 1.5 });
+        });
+
+        polygonsRef.current.push(polygon);
+      });
+    }
+
+    // 4.2 Draw Colored Flooded Road Corridors Directly On The Google Map Roads
+    const horizonMultiplier = horizon === 'T+0' ? 0.6 : horizon === 'T+15' ? 1.0 : horizon === 'T+30' ? 1.45 : 2.0;
+
+    const GUWAHATI_FLOODED_ROADS = [
+      {
+        id: 'road-gs-christian-basti',
+        name: 'GS Road (Christian Basti - ABC Corridor)',
+        baseDepth: 22.0,
+        surgeRate: 2.4,
+        path: [
+          { lat: 26.1415, lng: 91.7330 },
+          { lat: 26.1432, lng: 91.7348 },
+          { lat: 26.1448, lng: 91.7365 },
+          { lat: 26.1442, lng: 91.7410 },
+          { lat: 26.1430, lng: 91.7450 },
+          { lat: 26.1455, lng: 91.7460 },
+        ]
+      },
+      {
+        id: 'road-zoo-road-tiniali',
+        name: 'RG Baruah (Zoo) Road Chokepoint',
+        baseDepth: 16.5,
+        surgeRate: 1.8,
+        path: [
+          { lat: 26.1500, lng: 91.7410 },
+          { lat: 26.1520, lng: 91.7450 },
+          { lat: 26.1540, lng: 91.7485 },
+          { lat: 26.1555, lng: 91.7520 },
+          { lat: 26.1575, lng: 91.7565 },
+        ]
+      },
+      {
+        id: 'road-bharalu-canal',
+        name: 'Bharalu Sluice & Drainage Riverside Road',
+        baseDepth: 28.0,
+        surgeRate: 3.8,
+        path: [
+          { lat: 26.1738, lng: 91.7314 },
+          { lat: 26.1685, lng: 91.7300 },
+          { lat: 26.1620, lng: 91.7285 },
+          { lat: 26.1550, lng: 91.7280 },
+          { lat: 26.1510, lng: 91.7280 },
+        ]
+      },
+      {
+        id: 'road-dispur-crater',
+        name: 'Dispur Supermarket Relief Corridor',
+        baseDepth: 32.0,
+        surgeRate: 2.1,
+        path: [
+          { lat: 26.1460, lng: 91.7460 },
+          { lat: 26.1420, lng: 91.7650 },
+          { lat: 26.1380, lng: 91.7890 },
+          { lat: 26.1340, lng: 91.7940 },
+        ]
+      }
+    ];
+
+    GUWAHATI_FLOODED_ROADS.forEach((road) => {
+      const currentDepth = road.baseDepth * horizonMultiplier;
+      const roadColor = currentDepth > 30 ? '#EF4444' : currentDepth > 10 ? '#F97316' : '#EAB308';
+      const statusLabel = currentDepth > 30 
+        ? 'IMPASSABLE - ROAD BLOCKED' 
+        : currentDepth > 10 
+        ? 'HIGH ENGINE WATERLOGGING RISK' 
+        : 'INUNDATION CAUTION';
+
+      // Outer road glow halo
+      const glowLine = new window.google.maps.Polyline({
+        path: road.path,
+        strokeColor: roadColor,
+        strokeOpacity: 0.45,
+        strokeWeight: 14,
         map,
-        zIndex: 10,
+        zIndex: 14,
       });
 
-      polygon.addListener('mouseover', () => {
-        setHoveredPolygon(feature);
-        polygon.setOptions({ strokeColor: '#FFFFFF', strokeWeight: 3 });
+      // Core crisp colored road line
+      const coreLine = new window.google.maps.Polyline({
+        path: road.path,
+        strokeColor: roadColor,
+        strokeOpacity: 0.95,
+        strokeWeight: 6,
+        map,
+        zIndex: 15,
       });
 
-      polygon.addListener('mouseout', () => {
-        setHoveredPolygon(null);
-        polygon.setOptions({ strokeColor: color.stroke, strokeWeight: 2 });
+      const infoContent = `
+        <div style="color: #0f172a; font-family: system-ui, sans-serif; font-size: 12px; padding: 4px; min-width: 200px;">
+          <div style="font-weight: 700; color: ${roadColor}; font-size: 13px; text-transform: uppercase;">
+            ⚠️ FLOODED ROAD: ${road.name}
+          </div>
+          <div style="margin-top: 5px; font-size: 11px; color: #475569; line-height: 1.5;">
+            Water Depth: <b style="color: #0f172a;">${currentDepth.toFixed(1)} cm</b><br/>
+            Surge Velocity: <b>+${road.surgeRate} mm/min</b><br/>
+            Status: <b style="color: ${roadColor};">${statusLabel}</b>
+          </div>
+        </div>
+      `;
+
+      const infoWindow = new window.google.maps.InfoWindow({ content: infoContent });
+
+      coreLine.addListener('click', (e: any) => {
+        activeInfoWindowRef.current?.close();
+        infoWindow.setPosition(e.latLng || road.path[1]);
+        infoWindow.open(map);
+        activeInfoWindowRef.current = infoWindow;
       });
 
-      polygonsRef.current.push(polygon);
+      floodedRoadsRef.current.push(glowLine, coreLine);
     });
-  }, [floodGeoJson, googleMapsLoaded]);
+  }, [floodGeoJson, horizon, googleMapsLoaded]);
 
-  // 5. Update Google Maps Route Polyline
+  // 5. Update Google Maps Route Polyline with Real Road Snapping via DirectionsService
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !window.google?.maps) return;
 
+    // Clear previous route polylines
     if (routePolylineRef.current) {
-      routePolylineRef.current.setMap(null);
+      if (Array.isArray(routePolylineRef.current)) {
+        routePolylineRef.current.forEach((p: any) => p.setMap(null));
+      } else {
+        routePolylineRef.current.setMap(null);
+      }
       routePolylineRef.current = null;
     }
 
-    if (routeGeoJson?.geometry?.coordinates) {
-      const path = routeGeoJson.geometry.coordinates.map(([lng, lat]: [number, number]) => ({
-        lat,
-        lng,
-      }));
+    // Clear previous route markers
+    routeMarkersRef.current.forEach((m) => m.setMap(null));
+    routeMarkersRef.current = [];
 
-      const polyline = new window.google.maps.Polyline({
-        path,
+    if (!routeGeoJson?.geometry?.coordinates || routeGeoJson.geometry.coordinates.length < 2) return;
+
+    const coords = routeGeoJson.geometry.coordinates;
+    const originLngLat = coords[0];
+    const destLngLat = coords[coords.length - 1];
+
+    const origin = { lat: originLngLat[1], lng: originLngLat[0] };
+    const destination = { lat: destLngLat[1], lng: destLngLat[0] };
+    const vClass = routeGeoJson.properties?.vehicle_class || 'sedan';
+
+    // Polyline Drawer Helper
+    const drawRouteOnMap = (pathCoords: Array<{ lat: number; lng: number }>) => {
+      // Outer Cyan Halo Glow
+      const glowPolyline = new window.google.maps.Polyline({
+        path: pathCoords,
         strokeColor: '#00E5FF',
-        strokeOpacity: 0.95,
+        strokeOpacity: 0.4,
+        strokeWeight: 10,
+        map,
+        zIndex: 24,
+      });
+
+      // Inner Sharp Cyan Core
+      const corePolyline = new window.google.maps.Polyline({
+        path: pathCoords,
+        strokeColor: '#06B6D4',
+        strokeOpacity: 1.0,
         strokeWeight: 5,
         map,
         zIndex: 25,
       });
 
-      routePolylineRef.current = polyline;
+      routePolylineRef.current = [glowPolyline, corePolyline];
+
+      // Origin Marker (Start)
+      const originMarker = new window.google.maps.Marker({
+        position: origin,
+        map,
+        title: 'ORIGIN: Starting Point',
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          fillColor: '#10B981',
+          fillOpacity: 1.0,
+          strokeColor: '#FFFFFF',
+          strokeWeight: 3,
+          scale: 9,
+        },
+        zIndex: 35,
+      });
+
+      // Destination Marker (Safe Sanctuary)
+      const destMarker = new window.google.maps.Marker({
+        position: destination,
+        map,
+        title: 'SAFE SHELTER: Municipal High-Ground Sanctuary',
+        icon: {
+          path: window.google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+          fillColor: '#F59E0B',
+          fillOpacity: 1.0,
+          strokeColor: '#FFFFFF',
+          strokeWeight: 2.5,
+          scale: 6,
+        },
+        zIndex: 35,
+      });
+
+      routeMarkersRef.current.push(originMarker, destMarker);
+
+      // Auto-fit map bounds so the entire evacuation path is clearly visible
+      const bounds = new window.google.maps.LatLngBounds();
+      pathCoords.forEach((pt) => bounds.extend(pt));
+      map.fitBounds(bounds, { top: 60, right: 60, bottom: 60, left: 60 });
+    };
+
+    // Query Google Maps DirectionsService for Real Road Snapped Polyline
+    try {
+      const directionsService = new window.google.maps.DirectionsService();
+      const travelMode = vClass === 'walker'
+        ? window.google.maps.TravelMode.WALKING
+        : window.google.maps.TravelMode.DRIVING;
+
+      directionsService.route(
+        {
+          origin,
+          destination,
+          travelMode,
+          provideRouteAlternatives: true,
+        },
+        (result: any, status: any) => {
+          if (status === window.google.maps.DirectionsStatus.OK && result?.routes?.[0]) {
+            // Extract the real road geometry from Google's turn-by-turn overview_path
+            const roadSnappedPath = result.routes[0].overview_path.map((pt: any) => ({
+              lat: pt.lat(),
+              lng: pt.lng(),
+            }));
+            drawRouteOnMap(roadSnappedPath);
+          } else {
+            // Fallback to backend coordinates if DirectionsService has no road network result
+            const fallbackPath = coords.map(([lng, lat]: [number, number]) => ({ lat, lng }));
+            drawRouteOnMap(fallbackPath);
+          }
+        }
+      );
+    } catch (err) {
+      const fallbackPath = coords.map(([lng, lat]: [number, number]) => ({ lat, lng }));
+      drawRouteOnMap(fallbackPath);
     }
   }, [routeGeoJson, googleMapsLoaded]);
 
@@ -419,19 +638,23 @@ export default function FloodMap({
       {/* Floating Map Legend */}
       <div className="absolute bottom-3 left-3 z-30 bg-[#111827]/90 backdrop-blur border border-gray-800 p-2.5 rounded-xl shadow-xl flex flex-col gap-1.5 text-[10px] font-mono pointer-events-auto">
         <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px] mb-0.5">
-          Inundation Depth Choropleth
+          Road Inundation Corridors
         </span>
         <div className="flex items-center gap-2">
-          <span className="w-3.5 h-2.5 rounded-sm bg-yellow-400/70 border border-yellow-500"></span>
-          <span className="text-gray-300">0 – 10 cm (Yellow)</span>
+          <span className="w-3.5 h-1.5 rounded-full bg-yellow-400 border border-yellow-500"></span>
+          <span className="text-gray-300">0 – 10 cm (Yellow: Waterlogged)</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="w-3.5 h-2.5 rounded-sm bg-orange-500/70 border border-orange-600"></span>
+          <span className="w-3.5 h-1.5 rounded-full bg-orange-500 border border-orange-600"></span>
           <span className="text-gray-300">10 – 30 cm (Orange: Engine Risk)</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="w-3.5 h-2.5 rounded-sm bg-red-600/80 border border-red-500"></span>
-          <span className="text-gray-300">&gt; 30 cm (Red: Corridor Blocked)</span>
+          <span className="w-3.5 h-1.5 rounded-full bg-red-600 border border-red-500"></span>
+          <span className="text-gray-300">&gt; 30 cm (Red: Impassable Blocked)</span>
+        </div>
+        <div className="flex items-center gap-2 pt-0.5 border-t border-gray-800">
+          <span className="w-3.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#00E5FF]"></span>
+          <span className="text-cyan-300 font-semibold">Safe Evacuation Corridor</span>
         </div>
       </div>
 

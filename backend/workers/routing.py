@@ -67,12 +67,18 @@ def generate_default_guwahati_graph(target_path: str) -> None:
     nodes = []
     edges = []
 
-    # 1. Add key landmarks
+    # 1. Add key landmarks & arterial civic corridors
     landmarks = [
-        {"id": "christian_basti", "name": "Christian Basti Junction", "lat": 26.1448, "lng": 91.7365, "is_landmark": True},
+        {"id": "christian_basti", "name": "GS Road Christian Basti Junction", "lat": 26.1448, "lng": 91.7365, "is_landmark": True},
         {"id": "abc_point", "name": "ABC Bus Point", "lat": 26.1430, "lng": 91.7450, "is_landmark": True},
         {"id": "ganeshguri_detour", "name": "Ganeshguri Flyover Corridor", "lat": 26.1460, "lng": 91.7460, "is_landmark": True},
         {"id": "dispur_supermarket", "name": "Dispur Supermarket Relief Depot", "lat": 26.1380, "lng": 91.7890, "is_landmark": True},
+        {"id": "khanapara_highland", "name": "Khanapara Highland Relief Post", "lat": 26.1150, "lng": 91.8020, "is_landmark": True},
+        {"id": "gmch_hilltop", "name": "Gauhati Medical College Hospital", "lat": 26.1580, "lng": 91.7750, "is_landmark": True},
+        {"id": "zoo_road_tiniali", "name": "Zoo Road Tiniali Chokepoint", "lat": 26.1520, "lng": 91.7450, "is_landmark": True},
+        {"id": "paltan_bazaar", "name": "Paltan Bazaar Station", "lat": 26.1795, "lng": 91.7523, "is_landmark": True},
+        {"id": "bharalu_outfall", "name": "Bharalu Sluice Outfall", "lat": 26.1738, "lng": 91.7314, "is_landmark": True},
+        {"id": "jalukbari_hub", "name": "Jalukbari Transit Hub", "lat": 26.1482, "lng": 91.6625, "is_landmark": True},
     ]
     nodes.extend(landmarks)
 
@@ -87,6 +93,20 @@ def generate_default_guwahati_graph(target_path: str) -> None:
     edges.append({"u": "ganeshguri_detour", "v": "christian_basti", "length": 500.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
     edges.append({"u": "ganeshguri_detour", "v": "dispur_supermarket", "length": 900.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
     edges.append({"u": "dispur_supermarket", "v": "ganeshguri_detour", "length": 900.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+
+    # Arterial links to Khanapara Highland Shelter, GMCH Hilltop, Zoo Road, and Paltan Bazaar
+    edges.append({"u": "dispur_supermarket", "v": "khanapara_highland", "length": 2200.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "khanapara_highland", "v": "dispur_supermarket", "length": 2200.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "ganeshguri_detour", "v": "gmch_hilltop", "length": 1600.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "gmch_hilltop", "v": "ganeshguri_detour", "length": 1600.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "gmch_hilltop", "v": "dispur_supermarket", "length": 1800.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "dispur_supermarket", "v": "gmch_hilltop", "length": 1800.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "zoo_road_tiniali", "v": "ganeshguri_detour", "length": 1200.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "ganeshguri_detour", "v": "zoo_road_tiniali", "length": 1200.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "paltan_bazaar", "v": "christian_basti", "length": 2500.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "christian_basti", "v": "paltan_bazaar", "length": 2500.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "bharalu_outfall", "v": "christian_basti", "length": 3100.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
+    edges.append({"u": "christian_basti", "v": "bharalu_outfall", "length": 3100.0, "h_pred": 0.0, "hazard_flag": 0, "road_type": "arterial"})
 
     # 2. Add 10,000 grid nodes (100 x 100) across Guwahati area
     for r in range(100):
