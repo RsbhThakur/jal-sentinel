@@ -39,9 +39,27 @@ async def get_redis_client() -> aioredis.Redis:
             f"Live Redis unavailable at {settings.redis_url} ({e}). "
             f"Falling back to high-performance in-memory fake Redis cache."
         )
-        import fakeredis.aioredis as fake_aioredis
-        _redis_client = fake_aioredis.FakeRedis(decode_responses=True)
-        _is_fake = True
+        try:
+            import fakeredis.aioredis as fake_aioredis
+            _redis_client = fake_aioredis.FakeRedis(decode_responses=True)
+            _is_fake = True
+        except ImportError:
+            class InMemoryAsyncRedis:
+                def __init__(self):
+                    self._store = {}
+                async def ping(self):
+                    return True
+                async def get(self, key):
+                    return self._store.get(key)
+                async def set(self, key, value, ex=None):
+                    self._store[key] = value
+                    return True
+                async def delete(self, key):
+                    return self._store.pop(key, None) is not None
+                async def aclose(self):
+                    self._store.clear()
+            _redis_client = InMemoryAsyncRedis()
+            _is_fake = True
 
     return _redis_client
 
