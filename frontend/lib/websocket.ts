@@ -1,7 +1,8 @@
 /**
- * JAL-SENTINEL WebSocket Telemetry Client
+ * JAL-SENTINEL WebSocket Telemetry Client & React Hook
  * Manages low-latency real-time telemetry connections with auto-reconnect backoff.
  */
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 export type TelemetryMessageType = 'flood' | 'depth' | 'hazard' | 'route' | 'ping';
 
@@ -36,6 +37,7 @@ export class TelemetryWebSocketClient {
       this.ws.onopen = () => {
         console.log('[WS] Connected to JAL-SENTINEL telemetry stream');
         this.reconnectAttempts = 0;
+        this.handlers.forEach((h) => h({ type: 'ping', payload: { connected: true }, timestamp: new Date().toISOString() }));
       };
 
       this.ws.onmessage = (event) => {
@@ -49,6 +51,7 @@ export class TelemetryWebSocketClient {
 
       this.ws.onclose = () => {
         console.warn('[WS] Telemetry socket disconnected');
+        this.handlers.forEach((h) => h({ type: 'ping', payload: { connected: false }, timestamp: new Date().toISOString() }));
         if (this.shouldReconnect) {
           this.scheduleReconnect();
         }
@@ -61,6 +64,12 @@ export class TelemetryWebSocketClient {
     } catch (err) {
       console.error('[WS] Connection exception:', err);
       this.scheduleReconnect();
+    }
+  }
+
+  public send(data: Record<string, unknown>): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(data));
     }
   }
 
@@ -93,4 +102,99 @@ export class TelemetryWebSocketClient {
     console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})...`);
     setTimeout(() => this.connect(), delay);
   }
+}
+
+// Global Singleton for React Client
+let sharedClient: TelemetryWebSocketClient | null = null;
+
+export function getSharedTelemetryClient(): TelemetryWebSocketClient {
+  if (!sharedClient) {
+    sharedClient = new TelemetryWebSocketClient();
+    sharedClient.connect();
+  }
+  return sharedClient;
+}
+
+export interface FloodPolygonFeature {
+  type: string;
+  id: string;
+  properties: {
+    zone_name: string;
+    depth_cm: number;
+    surge_velocity_mm_min: number;
+    manning_roughness: number;
+    clearance_blocked: boolean;
+    horizon: string;
+  };
+  geometry: {
+    type: string;
+    coordinates: number[][][];
+  };
+}
+
+export interface FloodGeoJson {
+  type: string;
+  horizon: string;
+  timestamp: string;
+  features: FloodPolygonFeature[];
+}
+
+export interface DepthTelemetry {
+  depth_cm: number;
+  dhdt_mm_min: number;
+  status: string;
+  camera_id: string;
+  location: string;
+}
+
+export function useFloodTelemetry() {
+  const [connected, setConnected] = useState<boolean>(false);
+  const [horizon, setHorizonState] = useState<'T+0' | 'T+15' | 'T+30' | 'T+60'>('T+15');
+  const [floodData, setFloodData] = useState<FloodGeoJson | null>(null);
+  const [depthData, setDepthData] = useState<DepthTelemetry>({
+    depth_cm: 18.2,
+    dhdt_mm_min: 2.4,
+    status: 'SURGING',
+    camera_id: 'CAM-GHY-04',
+    location: 'GS Road Christian Basti'
+  });
+
+  const clientRef = useRef<TelemetryWebSocketClient | null>(null);
+
+  useEffect(() => {
+    const client = getSharedTelemetryClient();
+    clientRef.current = client;
+
+    const unsubscribe = client.subscribe((msg) => {
+      if (msg.type === 'ping') {
+        const payload = msg.payload as { connected: boolean };
+        setConnected(Boolean(payload.connected));
+      } else if (msg.type === 'flood') {
+        setFloodData(msg.payload as FloodGeoJson);
+        setConnected(true);
+      } else if (msg.type === 'depth') {
+        setDepthData(msg.payload as DepthTelemetry);
+        setConnected(true);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  const setHorizon = useCallback((newHorizon: 'T+0' | 'T+15' | 'T+30' | 'T+60') => {
+    setHorizonState(newHorizon);
+    if (clientRef.current) {
+      clientRef.current.send({ action: 'set_horizon', horizon: newHorizon });
+    }
+  }, []);
+
+  return {
+    connected,
+    horizon,
+    floodData,
+    depthData,
+    setHorizon
+  };
 }
