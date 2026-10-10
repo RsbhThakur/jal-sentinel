@@ -41,6 +41,12 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 @pytest_asyncio.fixture(scope="function")
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """Provide an async test HTTP client wired with database dependency override."""
+    import backend.database as db_mod
+    old_engine = db_mod.engine
+    old_session = db_mod.AsyncSessionLocal
+    db_mod.engine = test_engine
+    db_mod.AsyncSessionLocal = TestSessionLocal
+
     async def override_get_db():
         yield db_session
 
@@ -51,3 +57,6 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield ac
 
     app.dependency_overrides.clear()
+    db_mod.engine = old_engine
+    db_mod.AsyncSessionLocal = old_session
+
