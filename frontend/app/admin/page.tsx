@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   ShieldAlert,
   CheckCircle2,
@@ -15,7 +16,11 @@ import {
   Radio,
   FileText,
   Video,
-  Layers
+  Layers,
+  Lock,
+  LogOut,
+  ShieldCheck,
+  ArrowLeft
 } from 'lucide-react';
 import {
   VideoUploadItem,
@@ -26,7 +31,8 @@ import {
   rejectUpload,
   fetchAdminTickets,
   updateAdminTicket,
-  fetchAdminAuditLogs
+  fetchAdminAuditLogs,
+  loginAdmin
 } from '@/lib/api';
 
 const KANBAN_COLUMNS: Array<{ id: RepairTicketItem['status']; title: string; color: string; bg: string }> = [
@@ -37,13 +43,32 @@ const KANBAN_COLUMNS: Array<{ id: RepairTicketItem['status']; title: string; col
 ];
 
 export default function AdminDashboardPage() {
+  // Admin Gate Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
+  const [usernameInput, setUsernameInput] = useState<string>('');
+  const [passwordInput, setPasswordInput] = useState<string>('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isSubmittingLogin, setIsSubmittingLogin] = useState<boolean>(false);
+
   const [activeTab, setActiveTab] = useState<'kanban' | 'uploads' | 'audit'>('kanban');
   const [uploads, setUploads] = useState<VideoUploadItem[]>([]);
   const [tickets, setTickets] = useState<RepairTicketItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [draggedTicketId, setDraggedTicketId] = useState<string | null>(null);
+
+  // Check existing session clearance on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const storedAuth = sessionStorage.getItem('jal_sentinel_admin_auth');
+      if (storedAuth === 'true') {
+        setIsAuthenticated(true);
+      }
+    }
+    setIsCheckingAuth(false);
+  }, []);
 
   const loadData = async () => {
     try {
@@ -63,11 +88,59 @@ export default function AdminDashboardPage() {
     }
   };
 
+  // Only poll data if clearance is active
   useEffect(() => {
+    if (!isAuthenticated) return;
     loadData();
     const interval = setInterval(loadData, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isAuthenticated]);
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    setIsSubmittingLogin(true);
+
+    try {
+      const u = usernameInput.trim();
+      const p = passwordInput.trim();
+
+      // Hardcoded check: admin, admin
+      if (u === 'admin' && p === 'admin') {
+        // Attempt backend login synchronization
+        try {
+          const res = await loginAdmin(u, p);
+          if (res?.token) {
+            sessionStorage.setItem('jal_sentinel_admin_token', res.token);
+          }
+        } catch (err) {
+          console.warn('Backend login token sync note:', err);
+        }
+
+        sessionStorage.setItem('jal_sentinel_admin_auth', 'true');
+        sessionStorage.setItem('jal_sentinel_admin_user', 'admin');
+        setIsAuthenticated(true);
+      } else {
+        setLoginError('Invalid administrative credentials. Access restricted to authorized personnel.');
+      }
+    } catch (err: any) {
+      setLoginError(err?.message || 'Authentication failed. Please verify credentials.');
+    } finally {
+      setIsSubmittingLogin(false);
+    }
+  };
+
+  const handleLogout = () => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('jal_sentinel_admin_auth');
+      sessionStorage.removeItem('jal_sentinel_admin_token');
+      sessionStorage.removeItem('jal_sentinel_admin_user');
+    }
+    setIsAuthenticated(false);
+    setUsernameInput('');
+    setPasswordInput('');
+    setLoginError(null);
+  };
 
   const handleApprove = async (uploadId: string) => {
     try {
@@ -135,6 +208,139 @@ export default function AdminDashboardPage() {
   const pendingUploads = uploads.filter((u) => u.status === 'PENDING');
   const criticalTickets = tickets.filter((t) => t.urgency === 3);
 
+  // 1. Initial authentication verification spinner
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">
+        <div className="flex items-center gap-3">
+          <RefreshCw className="w-5 h-5 animate-spin text-cyan-500" />
+          <span className="font-mono text-sm">Verifying municipal clearance...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Admin Gate Screen (Unauthenticated)
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#0A0E17] via-slate-950 to-[#070A10] text-slate-100 flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden font-sans">
+        {/* Subtle grid background */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f293710_1px,transparent_1px),linear-gradient(to_bottom,#1f293710_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none" />
+
+        {/* Top return link */}
+        <div className="absolute top-6 left-6 z-10">
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-xs font-mono text-slate-400 hover:text-cyan-400 transition bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg backdrop-blur shadow-lg"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Return to Public Live Map
+          </Link>
+        </div>
+
+        {/* Security Gate Card */}
+        <div className="relative z-10 w-full max-w-md bg-slate-900/90 border border-slate-800/90 rounded-2xl shadow-2xl p-8 backdrop-blur-xl">
+          {/* Municipal Badge */}
+          <div className="flex flex-col items-center text-center mb-6">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600/20 to-cyan-500/10 border border-blue-500/30 flex items-center justify-center text-cyan-400 mb-4 shadow-inner">
+              <Lock className="w-7 h-7 text-cyan-400" />
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold tracking-wider uppercase bg-amber-500/10 text-amber-400 border border-amber-500/20 mb-2">
+              <ShieldAlert className="w-3 h-3 text-amber-400" />
+              Restricted Clearance Gate
+            </div>
+
+            <h1 className="text-xl font-bold tracking-tight text-white mb-1">
+              Municipal Command Gate
+            </h1>
+            <p className="text-xs text-slate-400 max-w-xs">
+              Guwahati Municipal Corporation &amp; Assam SDRF Urban Flood Mitigation Platform
+            </p>
+          </div>
+
+          {/* Error Notice */}
+          {loginError && (
+            <div className="mb-5 p-3 rounded-lg bg-rose-950/40 border border-rose-800/50 text-rose-300 text-xs flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold">Access Denied</p>
+                <p className="text-[11px] text-rose-300/90">{loginError}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Login Form */}
+          <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-mono font-semibold text-slate-300 mb-1.5">
+                Operator Username
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={usernameInput}
+                  onChange={(e) => setUsernameInput(e.target.value)}
+                  placeholder="admin"
+                  required
+                  autoFocus
+                  className="w-full bg-slate-950/80 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition font-mono"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-mono font-semibold text-slate-300 mb-1.5">
+                Passcode / Clearance Key
+              </label>
+              <div className="relative">
+                <input
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-slate-950/80 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition font-mono"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSubmittingLogin}
+              className="w-full mt-2 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 active:scale-[0.99] rounded-lg text-white font-semibold text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition disabled:opacity-50 cursor-pointer"
+            >
+              {isSubmittingLogin ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Verifying Clearance...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4" />
+                  Authenticate &amp; Enter Console
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Secure Hint */}
+          <div className="mt-6 pt-5 border-t border-slate-800/80 text-center">
+            <p className="text-[11px] font-mono text-slate-500">
+              Clearance Credentials: <span className="text-slate-400 font-bold">admin</span> / <span className="text-slate-400 font-bold">admin</span>
+            </p>
+          </div>
+        </div>
+
+        {/* Footer Audit Notice */}
+        <p className="mt-8 text-[11px] font-mono text-slate-600 text-center relative z-10">
+          All administrative access events and work-order state mutations are recorded to the immutable municipal audit trail.
+        </p>
+      </div>
+    );
+  }
+
+  // 3. Authenticated Municipal Command Console
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       {/* Top Banner */}
@@ -180,6 +386,30 @@ export default function AdminDashboardPage() {
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
+
+          {/* Operator Badge & Lock Gate Controls */}
+          <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-cyan-950/40 border border-cyan-800/40 text-[11px] font-mono">
+              <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-slate-400">Operator:</span>
+              <span className="text-cyan-300 font-bold">admin</span>
+            </div>
+            <Link
+              href="/"
+              title="Return to Public Live Map"
+              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-xs font-medium text-slate-300 transition"
+            >
+              Public Map
+            </Link>
+            <button
+              onClick={handleLogout}
+              title="Lock Admin Console & Logout"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 rounded-md text-xs font-medium text-rose-300 transition cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-400" />
+              Lock Gate
+            </button>
+          </div>
         </div>
       </header>
 

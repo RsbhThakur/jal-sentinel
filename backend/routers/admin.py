@@ -25,13 +25,38 @@ from backend.models.schemas import (
     VideoUploadResponse,
     RepairTicketResponse,
     RepairTicketUpdate,
-    AuditLogResponse
+    AuditLogResponse,
+    AdminLoginRequest,
+    AdminLoginResponse
 )
 from backend.workers.temporal_repair import run_temporal_cross_reference
 
 logger = logging.getLogger("jal_sentinel.admin")
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@router.post("/login", response_model=AdminLoginResponse, status_code=status.HTTP_200_OK)
+async def admin_login(creds: AdminLoginRequest):
+    """
+    Admin Gate Authentication Endpoint:
+    Validates hardcoded municipal credentials (admin / admin).
+    Returns the administrative bearer token upon success.
+    """
+    if creds.username == "admin" and creds.password == "admin":
+        logger.info("Admin successfully authenticated via Admin Gate.")
+        return AdminLoginResponse(
+            status="authenticated",
+            username="admin",
+            token=settings.admin_token,
+            message="Municipal clearance authorized. Welcome to JAL-SENTINEL Admin Console."
+        )
+
+    logger.warning(f"Failed admin authentication attempt for username: {creds.username}")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid administrative credentials. Access restricted to authorized personnel."
+    )
 
 
 def verify_admin_token(

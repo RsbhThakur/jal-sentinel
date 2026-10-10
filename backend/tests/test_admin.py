@@ -50,6 +50,26 @@ async def test_admin_auth_guard(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_admin_gate_login(client: AsyncClient):
+    """Verify hardcoded admin login credentials (admin / admin)."""
+    # 1. Invalid credentials -> 401
+    r_invalid = await client.post("/api/admin/login", json={"username": "admin", "password": "wrongpassword"})
+    assert r_invalid.status_code == 401
+    assert "Invalid administrative credentials" in r_invalid.json()["detail"]
+
+    r_invalid_user = await client.post("/api/admin/login", json={"username": "guest", "password": "admin"})
+    assert r_invalid_user.status_code == 401
+
+    # 2. Valid credentials -> 200 and returns settings.admin_token
+    r_valid = await client.post("/api/admin/login", json={"username": "admin", "password": "admin"})
+    assert r_valid.status_code == 200
+    data = r_valid.json()
+    assert data["status"] == "authenticated"
+    assert data["username"] == "admin"
+    assert data["token"] == settings.admin_token
+
+
+@pytest.mark.asyncio
 async def test_admin_gate_approve_upload(client: AsyncClient, db_session: AsyncSession):
     """
     Acceptance Criterion:

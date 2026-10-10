@@ -261,3 +261,15 @@ class CitizenSosResponse(BaseModel):
     timestamp: str
     audit_log_id: Optional[str] = None
 
+
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminLoginResponse(BaseModel):
+    status: str
+    username: str
+    token: str
+    message: str
+

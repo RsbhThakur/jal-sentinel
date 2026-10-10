@@ -197,7 +197,21 @@ export interface AuditLogItem {
   created_at: string;
 }
 
+export interface AdminLoginResult {
+  status: string;
+  username: string;
+  token: string;
+  message: string;
+}
+
 const DEFAULT_ADMIN_TOKEN = process.env.NEXT_PUBLIC_ADMIN_TOKEN || 'sentinel_admin_secret_token_2026';
+
+export async function loginAdmin(username: string, password: string): Promise<AdminLoginResult> {
+  return apiClient<AdminLoginResult>('/api/admin/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password })
+  });
+}
 
 export async function fetchAdminUploads(status?: string, token: string = DEFAULT_ADMIN_TOKEN): Promise<VideoUploadItem[]> {
   const query = status ? `?status=${encodeURIComponent(status)}` : '';
