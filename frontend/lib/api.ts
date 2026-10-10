@@ -127,6 +127,37 @@ export async function fetchFloodPrediction(
 }
 
 // ==============================================================================
+// Citizen Video Upload API (Issue #12)
+// ==============================================================================
+
+export interface VideoUploadSubmissionResponse {
+  id: string;
+  filename: string;
+  lat: number;
+  lng: number;
+  h3_hex_id: string;
+  recorded_at: string;
+  status: string;
+  created_at: string;
+  description?: string;
+}
+
+export async function uploadCitizenVideoFile(formData: FormData): Promise<VideoUploadSubmissionResponse> {
+  const url = `${API_BASE_URL}/api/video/upload`;
+  const response = await fetch(url, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new ApiError(response.status, `Upload Error [${response.status}]: ${errorBody}`);
+  }
+
+  return response.json() as Promise<VideoUploadSubmissionResponse>;
+}
+
+// ==============================================================================
 // Admin Gate & Kanban Work-Order Types and API Calls (Issue #8)
 // ==============================================================================
 
@@ -270,3 +301,4 @@ export async function fetchSdrfUnits(): Promise<SdrfUnitItem[]> {
 export async function fetchNearestSdrfUnit(lat: number, lng: number): Promise<SdrfUnitItem> {
   return apiClient<SdrfUnitItem>(`/api/sos/nearest?lat=${lat}&lng=${lng}`);
 }
+
