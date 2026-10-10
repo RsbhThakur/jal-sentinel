@@ -10,7 +10,8 @@ from sqlalchemy import select, and_
 import cv2
 
 from backend.database import get_db
-from backend.models.entities import HazardEvent
+from backend.models.entities import HazardEvent, RepairTicket, AuditLog, VideoUpload
+from backend.models.schemas import RepairTicketResponse, AuditLogResponse
 from backend.utils.geospatial import geo_to_h3
 from backend.workers.yolo_detector import (
     detector,
@@ -18,6 +19,7 @@ from backend.workers.yolo_detector import (
     persist_hazard_detection,
     HazardDetection
 )
+from backend.workers.temporal_repair import evaluate_hazard_cross_reference
 
 router = APIRouter(prefix="/api/hazards", tags=["hazards"])
 
@@ -266,3 +268,88 @@ async def detect_hazards_in_frame(
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+class CrossReferenceRequest(BaseModel):
+    lat: float
+    lng: float
+    hazard_class: str
+    is_present: bool
+    confidence: float = 0.9
+    recorded_at: Optional[datetime] = None
+
+
+@router.get("/tickets", response_model=List[RepairTicketResponse])
+async def list_repair_tickets(
+    status: Optional[str] = Query(None, description="Filter by ticket status: REQUIRED, DOING, ESCALATED, DONE_CANDIDATE, DONE"),
+    hazard_class: Optional[str] = Query(None, description="Filter by hazard class"),
+    h3_hex_id: Optional[str] = Query(None, description="Filter by H3 cell"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Lists municipal repair tickets with status and urgency."""
+    conditions = []
+    if status:
+        conditions.append(RepairTicket.status == status)
+    if hazard_class:
+        conditions.append(RepairTicket.hazard_class == hazard_class)
+    if h3_hex_id:
+        conditions.append(RepairTicket.h3_hex_id == h3_hex_id)
+
+    query = select(RepairTicket)
+    if conditions:
+        query = query.where(and_(*conditions))
+    query = query.order_by(RepairTicket.created_at.desc())
+
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.get("/audit-log", response_model=List[AuditLogResponse])
+async def list_audit_logs(
+    ticket_id: Optional[str] = Query(None, description="Filter by ticket UUID"),
+    action: Optional[str] = Query(None, description="Filter by action: ESCALATED, DONE_CANDIDATE, FALSE_POSITIVE"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Lists audit trail entries for automated state transitions."""
+    conditions = []
+    if ticket_id:
+        conditions.append(AuditLog.ticket_id == ticket_id)
+    if action:
+        conditions.append(AuditLog.action == action)
+
+    query = select(AuditLog)
+    if conditions:
+        query = query.where(and_(*conditions))
+    query = query.order_by(AuditLog.created_at.desc())
+
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.post("/cross-reference", response_model=dict, status_code=status.HTTP_200_OK)
+async def evaluate_cross_reference_endpoint(
+    request: CrossReferenceRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Evaluates temporal auto-repair cross-reference state machine for a specific coordinate and class.
+    """
+    hex_id = geo_to_h3(request.lat, request.lng, resolution=12)
+    upload_mock = VideoUpload(
+        id=f"eval-{int(datetime.now(timezone.utc).timestamp())}",
+        filename="eval_feed.mp4",
+        lat=request.lat,
+        lng=request.lng,
+        h3_hex_id=hex_id,
+        recorded_at=request.recorded_at or datetime.now(timezone.utc),
+        status="APPROVED"
+    )
+    result = await evaluate_hazard_cross_reference(
+        upload=upload_mock,
+        hazard_class=request.hazard_class,
+        is_present=request.is_present,
+        confidence=request.confidence,
+        db=db
+    )
+    return {"h3_hex_id": hex_id, **result}
+
